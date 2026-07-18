@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kalshi Weather Signals</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h1>Kalshi Weather Signals</h1>
+    <p class="subtitle">Model probability vs. market price, net of fees. Nothing here trades itself — review, then click through.</p>
+  </header>
+
+  {% if any_unvalidated %}
+  <div class="banner banner-warning">
+    <strong>Improved, still not fully validated (backtested 2026-07-17 against ~600 real settled days/city).</strong>
+    A systematic 1-2°F cold bias in the day-ahead forecast was found and corrected, cutting the model's
+    error score by up to a third in the worst-affected cities. A fatter-tailed distribution was also tried
+    and didn't help, so this stays a standard bell curve. Predictions above ~40% are still thinly sampled
+    and haven't been cross-checked against an independent ground truth — treat every number below as
+    exploratory, not a trading signal.
+  </div>
+  {% endif %}
+
+  {% if demo_reason %}
+  <div class="banner">{{ demo_reason }} Bracket data, prices, and rules text are a real snapshot pulled live from Kalshi and Open-Meteo; model probability and edge are computed by the real engine, not illustrative — but see the warning above.</div>
+  {% endif %}
+
+  <main>
+    <section>
+      <h2>Actionable ({{ actionable|length }})</h2>
+      {% if actionable %}
+      <div class="card-grid">
+        {% for alert in actionable %}
+          {% include "_alert_card.html" %}
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="empty">No alerts above threshold right now.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2>Below threshold / near-miss ({{ other|length }})</h2>
+      <p class="section-note">Shown for sanity-checking the model, not as trade signals.</p>
+      {% if other %}
+      <div class="card-grid">
+        {% for alert in other %}
+          {% include "_alert_card.html" %}
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="empty">Nothing here.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

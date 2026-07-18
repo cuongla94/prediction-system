@@ -1,0 +1,207 @@
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --border: #e2e2df;
+  --text: #1c1c1a;
+  --text-muted: #6b6b66;
+  --yes: #1a7f4e;
+  --yes-bg: #e8f5ee;
+  --no: #a13d2e;
+  --no-bg: #fbeae6;
+  --accent: #2d5f8a;
+  --banner-bg: #fff4d9;
+  --banner-border: #e6c569;
+  --warning-bg: #fbeae6;
+  --warning-border: #d97a63;
+  --warning-text: #7a2e1e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181a;
+    --surface: #212225;
+    --border: #35363a;
+    --text: #edECe9;
+    --text-muted: #9a9a96;
+    --yes: #4fd18b;
+    --yes-bg: #163828;
+    --no: #e08a77;
+    --no-bg: #3a2320;
+    --accent: #7db3e0;
+    --banner-bg: #3a3216;
+    --banner-border: #6b5a24;
+    --warning-bg: #3a2320;
+    --warning-border: #a8503a;
+    --warning-text: #f0b8a8;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 2rem 1.5rem 4rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.45;
+}
+
+header {
+  max-width: 72rem;
+  margin: 0 auto 1.5rem;
+}
+
+h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+.subtitle { margin: 0; color: var(--text-muted); }
+
+.banner {
+  max-width: 72rem;
+  margin: 0 auto 1.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--banner-bg);
+  border: 1px solid var(--banner-border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.banner-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+  font-size: 0.95rem;
+}
+
+main { max-width: 72rem; margin: 0 auto; }
+
+section { margin-bottom: 2.5rem; }
+h2 { font-size: 1.1rem; margin-bottom: 0.25rem; }
+.section-note { margin: 0 0 1rem; color: var(--text-muted); font-size: 0.85rem; }
+.empty { color: var(--text-muted); font-style: italic; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.card.muted { opacity: 0.72; }
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.city { font-weight: 600; }
+.bracket { color: var(--text-muted); }
+.side-badge {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+}
+.side-yes .side-badge { color: var(--yes); background: var(--yes-bg); }
+.side-no .side-badge { color: var(--no); background: var(--no-bg); }
+.side-flat .side-badge { color: var(--text-muted); background: var(--border); }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+}
+.stats > div { display: flex; flex-direction: column; }
+.stats dt {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.stats dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+.stats dd.edge { color: var(--accent); }
+
+.help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  text-transform: none;
+  cursor: help;
+}
+
+.help .tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: 135%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 11rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: left;
+  z-index: 10;
+  transition: opacity 0.1s ease;
+  pointer-events: none;
+}
+
+.help:hover .tooltip,
+.help:focus .tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+
+.rules {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+  font-size: 0.85rem;
+}
+.rules summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.rules-primary { margin: 0.5rem 0 0; }
+.rules-secondary { margin: 0.5rem 0 0; color: var(--text-muted); font-size: 0.8rem; }
+
+.trade-link {
+  display: inline-block;
+  text-align: center;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--accent);
+  color: white;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.trade-link:hover { opacity: 0.9; }

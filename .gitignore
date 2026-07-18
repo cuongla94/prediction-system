@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and local config
+.env
+*.pem
+*.crt
+*.key
+*.ca
+secrets/
+certs/
+.claude/settings.local.json
+
+# Data
+*.db
+*.sqlite3
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test/tooling
+.pytest_cache/
+.ruff_cache/

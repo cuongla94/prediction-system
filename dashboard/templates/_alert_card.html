@@ -1,0 +1,33 @@
+{% macro stat(label, value, help_text, css_class="") %}
+<div>
+  <dt>{{ label }}<span class="help" tabindex="0">?<span class="tooltip">{{ help_text }}</span></span></dt>
+  <dd class="{{ css_class }}">{{ value }}</dd>
+</div>
+{% endmacro %}
+
+<article class="card {{ 'actionable' if alert.is_actionable else 'muted' }} side-{{ alert.side|lower }}">
+  <div class="card-header">
+    <span class="city">{{ alert.city }}</span>
+    <span class="bracket">{{ alert.bracket_label }}</span>
+    <span class="side-badge">{{ alert.side }}</span>
+  </div>
+
+  <dl class="stats">
+    {{ stat("Model", "%.1f%%"|format(alert.model_probability * 100), "Our best guess at how likely this is to happen, based on weather forecasts. If it says 70%, that means: imagine this exact day happened 10 times — we think it'd come true about 7 of those times.") }}
+    {{ stat("Market", "%.1f%%"|format(alert.market_yes_price * 100), "What traders on Kalshi think will happen, guessed from the price they're paying. If \"Yes\" costs 40 cents, traders think there's about a 40% chance it happens.") }}
+    {{ stat("Edge", "%+.1f%%"|format(alert.edge * 100), "How much our guess and the market's guess don't match. A bigger number means we disagree with the market more — that's what makes this worth a second look.", "edge") }}
+    {{ stat("Threshold", "%.1f%%"|format(alert.fee_adjusted_threshold * 100), "The smallest disagreement worth caring about. Every trade costs a small fee, so if our edge is smaller than this line, it's not worth paying the fee for.") }}
+  </dl>
+
+  <details class="rules" open>
+    <summary>Settlement rules — read before trading</summary>
+    <p class="rules-primary">{{ alert.rules_primary }}</p>
+    {% if alert.rules_secondary %}
+    <p class="rules-secondary">{{ alert.rules_secondary }}</p>
+    {% endif %}
+  </details>
+
+  <a class="trade-link" href="{{ alert.kalshi_url }}" target="_blank" rel="noopener noreferrer">
+    Trade on Kalshi ({{ alert.market_ticker }}) ↗
+  </a>
+</article>
