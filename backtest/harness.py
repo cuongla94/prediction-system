@@ -13,13 +13,74 @@ token that hasn't been obtained yet, so it's not wired up here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from scipy import stats
 
 from kalshi_client import KalshiClient, parse_event_date
+from kalshi_client.models import Market
 from weather.historical_forecast import fetch_historical_daily_max
 from weather.stations import STATIONS
+
+
+def _repair_missing_strikes(markets: list[Market]) -> list[Market]:
+    """Recovers floor_strike/cap_strike for markets where Kalshi's historical
+    API returns both as null, using the market's own ticker suffix plus its
+    settled siblings in the same event.
+
+    Confirmed live 2026-07-18 via scripts/validate_against_noaa.py: exactly
+    25 events per city, identical dates (2025-01-16 through 2025-02-09) in
+    all 6 cities — a contained, Kalshi-side historical-data gap, not random
+    noise — and in every observed case it's specifically the *winning*
+    market in the ladder that comes back with floor_strike=cap_strike=None,
+    while every losing sibling in the same event has valid values. Since
+    every bracket ticker in this codebase already encodes its own strike
+    (e.g. "...-B35.5" -> floor=35, cap=36, the same convention
+    Market.bracket_label relies on) and Kalshi's own historical archive kept
+    that ticker intact even where it dropped the structured fields, the
+    value doesn't have to be discarded — it can be read back out of the
+    ticker itself. "B" (between) tickers are self-contained: the number is
+    always the ladder-relative midpoint, floor = value-0.5, cap = value+0.5,
+    with no ambiguity. "T" (tail) tickers need sibling context: a ticker
+    like "T44" could mean floor=44 (a high tail, "greater than 44") or
+    cap=44 (a low tail, "less than 44") depending on which end of that
+    specific ladder it's on — resolved by comparing against the min/max of
+    whatever floor/cap values its siblings in the same event actually have.
+    Markets are frozen, so repaired ones are new instances via
+    dataclasses.replace(), not mutated in place.
+    """
+    known_strikes = [
+        v for m in markets for v in (m.floor_strike, m.cap_strike) if v is not None
+    ]
+    if not known_strikes:
+        return markets  # nothing to cross-reference a tail ticker against
+
+    low_bound = min(known_strikes)
+    high_bound = max(known_strikes)
+
+    repaired = []
+    for market in markets:
+        if market.floor_strike is not None or market.cap_strike is not None:
+            repaired.append(market)
+            continue
+        suffix = market.ticker.rsplit("-", 1)[-1]
+        try:
+            if suffix.startswith("B"):
+                midpoint = float(suffix[1:])
+                market = replace(market, floor_strike=midpoint - 0.5, cap_strike=midpoint + 0.5)
+            elif suffix.startswith("T"):
+                value = float(suffix[1:])
+                if value >= high_bound:
+                    market = replace(market, floor_strike=value, cap_strike=None)
+                elif value <= low_bound:
+                    market = replace(market, floor_strike=None, cap_strike=value)
+                # else: value falls inside the known range instead of at
+                # either end — doesn't match how a tail bracket should
+                # relate to the rest of its ladder, so don't guess.
+        except ValueError:
+            pass  # unparseable suffix — leave the market as-is
+        repaired.append(market)
+    return repaired
 
 
 def _safe_event_date(event_ticker: str) -> str | None:
@@ -104,6 +165,7 @@ def collect_rows(
 
     rows: list[BacktestRow] = []
     for event_ticker, markets in by_event.items():
+        markets = _repair_missing_strikes(markets)
         try:
             event_date = parse_event_date(event_ticker)
         except ValueError:
@@ -172,21 +234,49 @@ def split_by_date(
     return fit_rows, eval_rows
 
 
-def collect_residuals(rows: list[BacktestRow]) -> list[float]:
-    """(actual - forecast_mean) residuals, one per day, not per bracket — a
+def collect_dated_residuals(rows: list[BacktestRow]) -> list[tuple[str, float]]:
+    """(date, actual - forecast_mean) pairs, one per day, not per bracket — a
     6-bracket event must not count 6x. Pooled across whichever days have a
     usable point-estimate of the actual temperature: tail-bracket wins only
     give an inequality, not a value, so those days are excluded (see
     BacktestRow.approx_actual_temp).
     """
     seen_dates: set[str] = set()
-    residuals: list[float] = []
+    result: list[tuple[str, float]] = []
     for row in rows:
         if row.approx_actual_temp is None or row.target_date in seen_dates:
             continue
         seen_dates.add(row.target_date)
-        residuals.append(row.approx_actual_temp - row.forecast_mean)
-    return residuals
+        result.append((row.target_date, row.approx_actual_temp - row.forecast_mean))
+    return result
+
+
+def collect_residuals(rows: list[BacktestRow]) -> list[float]:
+    """collect_dated_residuals(), without the dates — see that function for
+    what's excluded and why."""
+    return [residual for _, residual in collect_dated_residuals(rows)]
+
+
+def fit_monthly_bias(rows: list[BacktestRow], min_samples: int = 10) -> dict[int, float]:
+    """Mean residual bias per calendar month (1-12), not one flat number.
+
+    A single global bias can hide real seasonal variation — confirmed
+    2026-07-18: NYC's day-1-ahead forecast runs +2.7F cold in January but
+    -1.6F warm in July, a full sign flip a flat correction can't represent
+    (see kalshi-backtest-findings memory for the full per-city breakdown).
+    Months with fewer than `min_samples` residuals are omitted entirely
+    rather than returning a noisy estimate — callers should fall back to the
+    overall (non-seasonal) bias from fit_empirical_normal for those.
+    """
+    by_month: dict[int, list[float]] = {}
+    for date, residual in collect_dated_residuals(rows):
+        month = int(date.split("-")[1])
+        by_month.setdefault(month, []).append(residual)
+    return {
+        month: sum(residuals) / len(residuals)
+        for month, residuals in by_month.items()
+        if len(residuals) >= min_samples
+    }
 
 
 def fit_empirical_normal(rows: list[BacktestRow]) -> tuple[float, float]:

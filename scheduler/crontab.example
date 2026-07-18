@@ -1,0 +1,19 @@
+# Kalshi weather-signal pipeline: generate new alerts, then check pending
+# ones for settlement.
+#
+# Runs ~4-5 hours after each GFS/ICON model init (00Z/06Z/12Z/18Z), giving
+# Open-Meteo time to ingest the new run before we poll it; ECMWF often lags
+# further behind but the ensemble blend still benefits from whichever models
+# have refreshed by the time this fires. The settlement check is cheap
+# (skips anything not yet resolved), so it rides along on the same cadence
+# rather than needing its own schedule.
+#
+# Install (after replacing /path/to/kalshi-prediction-market below with the
+# real deployment path — cron needs an absolute path, it won't expand ~ or
+# resolve relative paths):
+#   crontab scheduler/crontab.example
+#
+# This repo doesn't manage log rotation — logrotate or similar on the host
+# should own that if the log file grows large.
+
+0 5,11,17,23 * * * /path/to/kalshi-prediction-market/scheduler/run_pipeline.sh >> /path/to/kalshi-prediction-market/logs/pipeline.log 2>&1

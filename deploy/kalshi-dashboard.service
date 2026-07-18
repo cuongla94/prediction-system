@@ -1,0 +1,20 @@
+[Unit]
+Description=Kalshi Weather Signals dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=kalshi
+WorkingDirectory=/opt/kalshi-prediction-market
+# Direct venv binary, not `uv run` — more robust under systemd, which doesn't
+# give the service the same PATH/shell environment a login session has.
+ExecStart=/opt/kalshi-prediction-market/.venv/bin/gunicorn --bind 127.0.0.1:8000 --workers 2 dashboard.app:app
+Restart=on-failure
+RestartSec=5
+
+# Bound to 127.0.0.1 only (see dashboard/app.py) — reach it via an SSH tunnel
+# (ssh -L 8000:localhost:8000 user@droplet-ip) rather than exposing it
+# directly to the internet. This is a single-user tool with no auth layer.
+
+[Install]
+WantedBy=multi-user.target

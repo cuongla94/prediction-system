@@ -23,6 +23,9 @@ certs/
 *.db
 *.sqlite3
 
+# Logs (scheduler cron output)
+logs/*.log
+
 # Editor/OS
 .DS_Store
 .idea/

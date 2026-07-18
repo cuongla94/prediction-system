@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from weather.calibration_params import get_calibration
 from weather.probability import (
     bracket_probability,
     calibrated_bracket_probability,
@@ -9,6 +10,7 @@ from weather.probability import (
     check_boundary_language,
     fit_normal,
     probability_for_market,
+    temperature_in_bracket,
 )
 
 
@@ -132,19 +134,70 @@ def test_probability_for_market_can_skip_the_cross_check():
 
 
 def test_calibrated_bracket_probability_applies_the_fitted_bias():
-    # NYC's fitted mean_bias is +0.92 (forecast runs cold) — a raw ensemble mean
-    # of 79.0 should behave like loc=79.92 once corrected, not loc=79.0.
+    params = get_calibration("KXHIGHNY")
     raw_mean = 79.0
-    corrected = calibrated_bracket_probability("KXHIGHNY", raw_mean, floor_strike=79.0, cap_strike=80.0)
-    uncorrected = bracket_probability(raw_mean, 2.22, floor_strike=79.0, cap_strike=80.0)
-    biased = bracket_probability(raw_mean + 0.92, 2.22, floor_strike=79.0, cap_strike=80.0)
+    month = 6  # a month outside NYC's fitted monthly dict edge cases, if any
+    corrected = calibrated_bracket_probability(
+        "KXHIGHNY", raw_mean, floor_strike=79.0, cap_strike=80.0, target_month=month
+    )
+    uncorrected = bracket_probability(raw_mean, params.std, floor_strike=79.0, cap_strike=80.0)
+    biased = bracket_probability(
+        raw_mean + params.bias_for_month(month), params.std, floor_strike=79.0, cap_strike=80.0
+    )
     assert corrected == pytest.approx(biased)
     assert corrected != pytest.approx(uncorrected)
 
 
 def test_calibrated_bracket_probability_rejects_unfitted_city():
     with pytest.raises(KeyError):
-        calibrated_bracket_probability("KXHIGHNOWHERE", 80.0, floor_strike=79.0, cap_strike=80.0)
+        calibrated_bracket_probability("KXHIGHNOWHERE", 80.0, floor_strike=79.0, cap_strike=80.0, target_month=1)
+
+
+def test_calibrated_bracket_probability_varies_by_month_when_city_has_seasonal_data():
+    # Confirmed 2026-07-18: NYC's forecast bias flips sign between winter and
+    # summer, so it has a monthly correction — January and July must not
+    # collapse to the same probability the way a flat-bias city would.
+    params = get_calibration("KXHIGHNY")
+    assert params.monthly_bias is not None, "test assumes NYC has a validated monthly correction"
+
+    raw_mean = 79.0
+    jan = calibrated_bracket_probability("KXHIGHNY", raw_mean, floor_strike=79.0, cap_strike=80.0, target_month=1)
+    jul = calibrated_bracket_probability("KXHIGHNY", raw_mean, floor_strike=79.0, cap_strike=80.0, target_month=7)
+    assert jan != pytest.approx(jul)
+
+
+def test_calibrated_bracket_probability_flat_city_ignores_month():
+    # A city where the flat bias validated better (e.g. Miami) should give the
+    # same probability regardless of target_month.
+    params = get_calibration("KXHIGHMIA")
+    assert params.monthly_bias is None, "test assumes Miami's flat bias won validation"
+
+    raw_mean = 88.0
+    jan = calibrated_bracket_probability("KXHIGHMIA", raw_mean, floor_strike=88.0, cap_strike=89.0, target_month=1)
+    jul = calibrated_bracket_probability("KXHIGHMIA", raw_mean, floor_strike=88.0, cap_strike=89.0, target_month=7)
+    assert jan == pytest.approx(jul)
+
+
+def test_temperature_in_bracket_cap_only_excludes_the_cap_itself():
+    assert temperature_in_bracket(78.0, floor_strike=None, cap_strike=79.0) is True
+    assert temperature_in_bracket(79.0, floor_strike=None, cap_strike=79.0) is False
+
+
+def test_temperature_in_bracket_floor_only_excludes_the_floor_itself():
+    assert temperature_in_bracket(87.0, floor_strike=86.0, cap_strike=None) is True
+    assert temperature_in_bracket(86.0, floor_strike=86.0, cap_strike=None) is False
+
+
+def test_temperature_in_bracket_between_includes_both_ends():
+    assert temperature_in_bracket(79.0, floor_strike=79.0, cap_strike=80.0) is True
+    assert temperature_in_bracket(80.0, floor_strike=79.0, cap_strike=80.0) is True
+    assert temperature_in_bracket(78.0, floor_strike=79.0, cap_strike=80.0) is False
+    assert temperature_in_bracket(81.0, floor_strike=79.0, cap_strike=80.0) is False
+
+
+def test_temperature_in_bracket_requires_a_bound():
+    with pytest.raises(ValueError):
+        temperature_in_bracket(80.0, floor_strike=None, cap_strike=None)
 
 
 def test_calibrated_probability_for_market_runs_the_cross_check():
@@ -155,4 +208,5 @@ def test_calibrated_probability_for_market_runs_the_cross_check():
             floor_strike=None,
             cap_strike=79.0,
             ensemble_mean=80.0,
+            target_month=1,
         )

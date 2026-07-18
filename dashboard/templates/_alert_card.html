@@ -5,29 +5,70 @@
 </div>
 {% endmacro %}
 
-<article class="card {{ 'actionable' if alert.is_actionable else 'muted' }} side-{{ alert.side|lower }}">
-  <div class="card-header">
-    <span class="city">{{ alert.city }}</span>
-    <span class="bracket">{{ alert.bracket_label }}</span>
+{% set sizing = event.sizing[alert.market_ticker] %}
+
+<tr id="row-{{ alert.market_ticker | replace('.', '-') }}"
+    class="ladder-row {{ 'actionable' if alert.is_actionable else 'muted' }} side-{{ alert.side|lower }}"
+    data-search="{{ (alert.city ~ ' ' ~ alert.bracket_label ~ ' ' ~ alert.question)|lower }}"
+    data-category="daily-temperature"
+    data-status="{{ event.trading_status }}"
+    data-actionable="{{ 'true' if alert.is_actionable else 'false' }}">
+  <td class="ladder-bracket">{{ alert.bracket_label }}</td>
+  <td class="ladder-pick">
     <span class="side-badge">{{ alert.side }}</span>
-  </div>
+    <span class="pick-edge">{{ "%+.1f%%"|format(alert.edge * 100) }} edge</span>
+    <span class="win-probability">{{ "%.0f%%"|format(alert.win_probability * 100) }} win chance</span>
+  </td>
+  <td class="ladder-actions">
+    <button type="button" class="btn-details"
+            onclick="document.body.style.overflow='hidden'; document.getElementById('details-{{ alert.id }}').showModal()">
+      Details
+    </button>
 
-  <dl class="stats">
-    {{ stat("Model", "%.1f%%"|format(alert.model_probability * 100), "Our best guess at how likely this is to happen, based on weather forecasts. If it says 70%, that means: imagine this exact day happened 10 times — we think it'd come true about 7 of those times.") }}
-    {{ stat("Market", "%.1f%%"|format(alert.market_yes_price * 100), "What traders on Kalshi think will happen, guessed from the price they're paying. If \"Yes\" costs 40 cents, traders think there's about a 40% chance it happens.") }}
-    {{ stat("Edge", "%+.1f%%"|format(alert.edge * 100), "How much our guess and the market's guess don't match. A bigger number means we disagree with the market more — that's what makes this worth a second look.", "edge") }}
-    {{ stat("Threshold", "%.1f%%"|format(alert.fee_adjusted_threshold * 100), "The smallest disagreement worth caring about. Every trade costs a small fee, so if our edge is smaller than this line, it's not worth paying the fee for.") }}
-  </dl>
+    <dialog id="details-{{ alert.id }}" class="details-modal">
+      <form method="dialog" class="modal-close-form">
+        <button type="submit" class="modal-close" aria-label="Close">×</button>
+      </form>
 
-  <details class="rules" open>
-    <summary>Settlement rules — read before trading</summary>
-    <p class="rules-primary">{{ alert.rules_primary }}</p>
-    {% if alert.rules_secondary %}
-    <p class="rules-secondary">{{ alert.rules_secondary }}</p>
-    {% endif %}
-  </details>
+      <p class="modal-question">{{ alert.question }}</p>
+      <div class="modal-header">
+        <span class="modal-bracket">{{ alert.bracket_label }}</span>
+        <span class="side-badge">{{ alert.side }}</span>
+      </div>
+      <p class="ticker-id">{{ alert.market_ticker }}</p>
 
-  <a class="trade-link" href="{{ alert.kalshi_url }}" target="_blank" rel="noopener noreferrer">
-    Trade on Kalshi ({{ alert.market_ticker }}) ↗
-  </a>
-</article>
+      <dl class="stats">
+        {{ stat("Model", "%.1f%%"|format(alert.model_probability * 100), "Our best guess at how likely this is to happen, based on weather forecasts. If it says 70%, that means: imagine this exact day happened 10 times — we think it'd come true about 7 of those times.") }}
+        {{ stat("Market", "%.1f%%"|format(alert.market_yes_price * 100), "What traders on Kalshi think will happen, guessed from the price they're paying. If \"Yes\" costs 40 cents, traders think there's about a 40% chance it happens.") }}
+        {{ stat("Edge", "%+.1f%%"|format(alert.edge * 100), "How much our guess and the market's guess don't match. A bigger number means we disagree with the market more — that's what makes this worth a second look.", "edge") }}
+        {{ stat("Threshold", "%.1f%%"|format(alert.fee_adjusted_threshold * 100), "The smallest disagreement worth caring about. Every trade costs a small fee, so if our edge is smaller than this line, it's not worth paying the fee for.") }}
+      </dl>
+
+      <p class="stake-callout">
+        <span class="stake-label">Suggested stake
+          <span class="help" tabindex="0">?<span class="tooltip">A cautious slice of your bankroll to
+            risk on this bracket — bigger when we're more confident and the market disagrees with us
+            more, smaller otherwise (a quarter of the "bet the theoretically optimal amount" formula,
+            since our confidence itself isn't perfectly known). Already reduced to account for the
+            other brackets in this same event competing for the same risk budget.</span></span>
+        </span>
+        <span class="stake-value">
+          {{ "%.1f%%"|format(sizing.recommended_fraction * 100) }} of bankroll
+        </span>
+      </p>
+
+      <details class="rules" open>
+        <summary>Settlement rules — read before trading</summary>
+        <p class="rules-primary">{{ alert.rules_primary }}</p>
+        {% if alert.rules_secondary %}
+        <p class="rules-secondary">{{ alert.rules_secondary }}</p>
+        {% endif %}
+      </details>
+
+      <details class="reasoning">
+        <summary>Why this probability?</summary>
+        <p>{{ reasoning_text(alert) }}</p>
+      </details>
+    </dialog>
+  </td>
+</tr>

@@ -8,18 +8,49 @@
 </head>
 <body>
   <header>
-    <h1>Kalshi Weather Signals</h1>
-    <p class="subtitle">Model probability vs. market price, net of fees. Nothing here trades itself — review, then click through.</p>
+    <div class="header-row">
+      <h1>Kalshi Weather Signals</h1>
+      <div class="header-actions">
+        <a class="status-link" href="{{ url_for('status') }}">System status</a>
+        <div class="bell-wrap">
+          <button type="button" class="bell-button" id="bell-button" aria-haspopup="true" aria-expanded="false">
+            🔔
+            {% if actionable_alerts %}<span class="bell-badge">{{ actionable_alerts|length }}</span>{% endif %}
+          </button>
+          <div class="bell-panel" id="bell-panel" hidden>
+            <h2>Actionable alerts</h2>
+            {% if actionable_alerts %}
+            <ul class="bell-list">
+              {% for alert in actionable_alerts %}
+              <li>
+                <a href="#row-{{ alert.market_ticker | replace('.', '-') }}">
+                  <span class="side-badge">{{ alert.side }}</span>
+                  {{ alert.city }} {{ alert.bracket_label }}
+                  <span class="pick-edge">{{ "%+.1f%%"|format(alert.edge * 100) }}</span>
+                </a>
+              </li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="bell-empty">Nothing actionable right now.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
   </header>
 
   {% if any_unvalidated %}
   <div class="banner banner-warning">
-    <strong>Improved, still not fully validated (backtested 2026-07-17 against ~600 real settled days/city).</strong>
-    A systematic 1-2°F cold bias in the day-ahead forecast was found and corrected, cutting the model's
-    error score by up to a third in the worst-affected cities. A fatter-tailed distribution was also tried
-    and didn't help, so this stays a standard bell curve. Predictions above ~40% are still thinly sampled
-    and haven't been cross-checked against an independent ground truth — treat every number below as
-    exploratory, not a trading signal.
+    <strong>Improved, partially validated (last backtested 2026-07-18 against ~600 real settled days/city).</strong>
+    The day-ahead forecast's bias isn't constant through the year — NYC's flips from +2.7°F cold in
+    January to -1.6°F warm in July — so NYC, Chicago, and Denver now use a month-specific correction;
+    Philadelphia, Austin, and Miami's seasonal swing was small enough that a single flat correction still
+    tested better for them. A fatter-tailed distribution was tried earlier and didn't help, so this stays
+    a standard bell curve. Cross-checked against NOAA's independent station data on 2026-07-18: Kalshi's
+    own settlement results agreed on 3,759 of 3,762 comparable days (99.9%) — that data holds up.
+    Predictions above ~40% are still thinly sampled, though — treat those specifically as exploratory,
+    not a trading signal.
   </div>
   {% endif %}
 
@@ -27,33 +58,228 @@
   <div class="banner">{{ demo_reason }} Bracket data, prices, and rules text are a real snapshot pulled live from Kalshi and Open-Meteo; model probability and edge are computed by the real engine, not illustrative — but see the warning above.</div>
   {% endif %}
 
-  <main>
-    <section>
-      <h2>Actionable ({{ actionable|length }})</h2>
-      {% if actionable %}
-      <div class="card-grid">
-        {% for alert in actionable %}
-          {% include "_alert_card.html" %}
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="empty">No alerts above threshold right now.</p>
-      {% endif %}
-    </section>
+  {% if events %}
+  <div class="controls">
+    <input type="search" id="search-input" placeholder="Search by city or bracket…" aria-label="Search alerts">
+    <select id="category-filter" aria-label="Filter by category">
+      <option value="">All categories</option>
+      <option value="daily-temperature">Daily temperature</option>
+    </select>
+    <select id="status-filter" aria-label="Filter by trading status">
+      <option value="">Open + closed</option>
+      <option value="open">Open only</option>
+      <option value="closed">Closed only</option>
+    </select>
+    <label class="checkbox-label"><input type="checkbox" id="actionable-filter"> Actionable only</label>
+    <span class="controls-count" id="controls-count"></span>
+  </div>
+  <p class="controls-note">
+    Stakes below assume quarter-Kelly sizing ({{ "%.0f%%"|format(kelly_fraction * 100) }} of the
+    theoretical optimum) capped at {{ "%.0f%%"|format(max_event_exposure * 100) }} of bankroll per
+    event, shown as a percentage of whatever bankroll you're actually risking.
+  </p>
+  {% endif %}
 
-    <section>
-      <h2>Below threshold / near-miss ({{ other|length }})</h2>
-      <p class="section-note">Shown for sanity-checking the model, not as trade signals.</p>
-      {% if other %}
-      <div class="card-grid">
-        {% for alert in other %}
-          {% include "_alert_card.html" %}
-        {% endfor %}
+  <main>
+    {% if not events %}
+    <p class="empty">No alerts right now.</p>
+    {% endif %}
+
+    <p class="no-results" id="no-results" hidden>No alerts match your search or filters.</p>
+
+    {% for event in events %}
+    <section class="event-card">
+      <div class="event-header">
+        <a class="event-category" href="https://kalshi.com/category/climate/daily-temperature" target="_blank" rel="noopener noreferrer">Daily temperature</a>
+        <h2 class="event-question">Highest temperature in {{ event.city }} today?</h2>
+        <p class="event-meta">
+          <span class="status-badge status-{{ event.trading_status }}">{{ event.trading_status|capitalize }}</span>
+          <span class="event-date">{{ event.date_label }}</span>
+          {% if event.city in current_temps %}
+          <span class="current-temp">
+            <span class="live-dot"></span>
+            LIVE {{ "%.0f"|format(current_temps[event.city][0]) }}°F
+            <span class="help" tabindex="0">?<span class="tooltip">A live reading right now, not part of
+              the model's forecast — just a quick sanity check against where the day is heading.</span></span>
+          </span>
+          {% endif %}
+          {% if event.close_time %}
+          <span class="countdown" data-close-time="{{ event.close_time }}">—</span>
+          {% endif %}
+          <a class="trade-link event-trade-link" href="{{ event.kalshi_url }}" target="_blank" rel="noopener noreferrer">
+            Trade on Kalshi ↗
+          </a>
+        </p>
+        <p class="event-note">
+          All {{ event.alerts|length }} brackets for this day are one distribution, not independent
+          picks — {{ event.actionable_count }} clear the threshold below.
+          <span class="help" tabindex="0">?<span class="tooltip">These brackets are all bets on the
+            same day's temperature, so they move together, not independently. This line adds up
+            every bracket's market price for the day — it should land near 100% if the market is
+            being consistent with itself across the whole ladder. {{ "%+.0f%%"|format(event.sum_deviation * 100) }}
+            means the market's prices for this day add up to {{ "%.0f%%"|format((1 + event.sum_deviation) * 100) }}
+            of certainty, not exactly 100%.</span></span>
+          {% if event.total_recommended_fraction > 0 %}
+          — suggested total exposure for this event:
+          <strong class="stake-value">{{ "%.1f%%"|format(event.total_recommended_fraction * 100) }} of bankroll</strong>
+          {% endif %}
+        </p>
       </div>
-      {% else %}
-      <p class="empty">Nothing here.</p>
-      {% endif %}
+      <details class="ladder-toggle">
+        <summary>{{ event.alerts|length }} brackets · {{ event.actionable_count }} actionable</summary>
+        <table class="ladder">
+          <tbody>
+            {% for alert in event.alerts %}
+              {% include "_alert_card.html" %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
     </section>
+    {% endfor %}
   </main>
+
+  <script>
+    (function () {
+      var searchInput = document.getElementById('search-input');
+      var categoryFilter = document.getElementById('category-filter');
+      var statusFilter = document.getElementById('status-filter');
+      var actionableFilter = document.getElementById('actionable-filter');
+      var countEl = document.getElementById('controls-count');
+      var noResults = document.getElementById('no-results');
+      var groups = document.querySelectorAll('.event-card');
+      if (!searchInput) return;
+
+      function applyFilters() {
+        var search = searchInput.value.trim().toLowerCase();
+        var category = categoryFilter.value;
+        var status = statusFilter.value;
+        var actionableOnly = actionableFilter.checked;
+        var filtersActive = !!(search || category || status || actionableOnly);
+        var visibleCount = 0;
+        var totalCount = 0;
+
+        groups.forEach(function (group) {
+          var anyVisible = false;
+          group.querySelectorAll('.ladder-row').forEach(function (row) {
+            totalCount += 1;
+            var matchesSearch = !search || row.dataset.search.indexOf(search) !== -1;
+            var matchesCategory = !category || row.dataset.category === category;
+            var matchesStatus = !status || row.dataset.status === status;
+            var matchesActionable = !actionableOnly || row.dataset.actionable === 'true';
+            var visible = matchesSearch && matchesCategory && matchesStatus && matchesActionable;
+            row.hidden = !visible;
+            if (visible) { anyVisible = true; visibleCount += 1; }
+          });
+          group.hidden = !anyVisible;
+          // A collapsed bracket list would otherwise hide a matching row even
+          // though our own row.hidden says it should show — force it open
+          // while a filter is actively narrowing things down.
+          if (anyVisible && filtersActive) {
+            var details = group.querySelector('.ladder-toggle');
+            if (details) details.open = true;
+          }
+        });
+
+        countEl.textContent = visibleCount === totalCount
+          ? totalCount + ' alert' + (totalCount === 1 ? '' : 's')
+          : 'Showing ' + visibleCount + ' of ' + totalCount;
+        noResults.hidden = visibleCount !== 0;
+      }
+
+      searchInput.addEventListener('input', applyFilters);
+      categoryFilter.addEventListener('change', applyFilters);
+      statusFilter.addEventListener('change', applyFilters);
+      actionableFilter.addEventListener('change', applyFilters);
+      applyFilters();
+    })();
+
+    document.querySelectorAll('dialog.details-modal').forEach(function (dialog) {
+      dialog.addEventListener('click', function (event) {
+        if (event.target === dialog) dialog.close();
+      });
+      // Restore background scrolling however the dialog closed (X button,
+      // Escape key, backdrop click) — the native `close` event covers all
+      // three, so this doesn't need to be duplicated per close path.
+      dialog.addEventListener('close', function () {
+        document.body.style.overflow = '';
+      });
+    });
+
+    (function () {
+      var bellButton = document.getElementById('bell-button');
+      var bellPanel = document.getElementById('bell-panel');
+      if (!bellButton) return;
+
+      bellButton.addEventListener('click', function (event) {
+        event.stopPropagation();
+        var willOpen = bellPanel.hidden;
+        bellPanel.hidden = !willOpen;
+        bellButton.setAttribute('aria-expanded', String(willOpen));
+      });
+      document.addEventListener('click', function (event) {
+        if (!bellPanel.hidden && !bellPanel.contains(event.target) && event.target !== bellButton) {
+          bellPanel.hidden = true;
+          bellButton.setAttribute('aria-expanded', 'false');
+        }
+      });
+      bellPanel.querySelectorAll('a').forEach(function (link) {
+        link.addEventListener('click', function () {
+          // Open the target's collapsed bracket list *before* the browser's
+          // default navigation runs, so the anchor scroll lands on something
+          // actually visible rather than inside a closed <details>.
+          var target = document.getElementById(link.getAttribute('href').slice(1));
+          var details = target && target.closest('.ladder-toggle');
+          if (details) details.open = true;
+          // Deferred: hiding the panel synchronously here raced with the
+          // click's own default action and silently cancelled the
+          // navigation (confirmed live — location.hash never changed).
+          // Letting the click finish first, then hiding, fixes it.
+          setTimeout(function () {
+            bellPanel.hidden = true;
+            bellButton.setAttribute('aria-expanded', 'false');
+          }, 0);
+        });
+      });
+    })();
+
+    (function () {
+      var countdowns = document.querySelectorAll('.countdown[data-close-time]');
+      if (!countdowns.length) return;
+
+      function formatRemaining(ms) {
+        if (ms <= 0) return 'Trading closed';
+        var totalSeconds = Math.floor(ms / 1000);
+        var days = Math.floor(totalSeconds / 86400);
+        var hours = Math.floor((totalSeconds % 86400) / 3600);
+        var minutes = Math.floor((totalSeconds % 3600) / 60);
+        var seconds = totalSeconds % 60;
+        if (days > 0) return 'Closes in ' + days + 'd ' + hours + 'h';
+        if (hours > 0) return 'Closes in ' + hours + 'h ' + minutes + 'm';
+        return 'Closes in ' + minutes + 'm ' + seconds + 's';
+      }
+
+      function tick() {
+        var now = Date.now();
+        countdowns.forEach(function (el) {
+          var remaining = new Date(el.dataset.closeTime).getTime() - now;
+          el.textContent = formatRemaining(remaining);
+          el.classList.toggle('urgent', remaining > 0 && remaining < 3600000);
+          el.classList.toggle('closed', remaining <= 0);
+
+          // Keep the status badge in sync without a page reload — e.g. a
+          // market that closes while someone's already looking at the page.
+          var badge = el.parentElement.querySelector('.status-badge');
+          if (badge && remaining <= 0 && !badge.classList.contains('status-closed')) {
+            badge.textContent = 'Closed';
+            badge.className = 'status-badge status-closed';
+          }
+        });
+      }
+
+      tick();
+      setInterval(tick, 1000);
+    })();
+  </script>
 </body>
 </html>

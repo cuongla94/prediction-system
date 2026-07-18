@@ -17,6 +17,16 @@ utc_offset_seconds in the response) — the two happened to agree for that day's
 max because it landed at 7pm, far from either midnight, but an overnight spike near
 the boundary could resolve to the wrong calendar day if the DST-aware zone were used.
 Note Etc/GMT signs are inverted from normal convention: Etc/GMT+5 means UTC-5 (EST).
+
+ghcnd_id is a *different* station identifier from nws_station_id — NOAA's GHCND
+(Global Historical Climatology Network Daily) archive, used by the CDO API for
+independent settlement validation (weather/noaa_cdo.py), doesn't use NWS's
+3-4 letter station codes. Resolved 2026-07-18 from NOAA's public bulk file
+ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-stations.txt (no token needed), matched
+by lat/lon proximity + name — see kalshi-backtest-findings memory for the full
+matching process, including one near-miss: Philadelphia's nearest-by-distance
+station (USC00366880, "PHILA AP SNOW") is a real substation but snow-only, not
+the one that actually has TMAX data.
 """
 
 from __future__ import annotations
@@ -33,17 +43,18 @@ class Station:
     latitude: float
     longitude: float
     standard_time_timezone: str
+    ghcnd_id: str
 
 
 STATIONS: dict[str, Station] = {
-    "KXHIGHNY": Station("NYC", "KXHIGHNY", "NYC", "OKX", 40.7794, -73.9692, "Etc/GMT+5"),
-    "KXHIGHCHI": Station("Chicago", "KXHIGHCHI", "MDW", "LOT", 41.7868, -87.7522, "Etc/GMT+6"),
+    "KXHIGHNY": Station("NYC", "KXHIGHNY", "NYC", "OKX", 40.7794, -73.9692, "Etc/GMT+5", "USW00094728"),
+    "KXHIGHCHI": Station("Chicago", "KXHIGHCHI", "MDW", "LOT", 41.7868, -87.7522, "Etc/GMT+6", "USW00014819"),
     "KXHIGHPHIL": Station(
-        "Philadelphia", "KXHIGHPHIL", "PHL", "PHI", 39.8721, -75.2411, "Etc/GMT+5"
+        "Philadelphia", "KXHIGHPHIL", "PHL", "PHI", 39.8721, -75.2411, "Etc/GMT+5", "USW00013739"
     ),
-    "KXHIGHAUS": Station("Austin", "KXHIGHAUS", "AUS", "EWX", 30.1975, -97.6664, "Etc/GMT+6"),
-    "KXHIGHDEN": Station("Denver", "KXHIGHDEN", "DEN", "BOU", 39.8561, -104.6737, "Etc/GMT+7"),
-    "KXHIGHMIA": Station("Miami", "KXHIGHMIA", "MIA", "MFL", 25.7959, -80.2870, "Etc/GMT+5"),
+    "KXHIGHAUS": Station("Austin", "KXHIGHAUS", "AUS", "EWX", 30.1975, -97.6664, "Etc/GMT+6", "USW00013904"),
+    "KXHIGHDEN": Station("Denver", "KXHIGHDEN", "DEN", "BOU", 39.8561, -104.6737, "Etc/GMT+7", "USW00003017"),
+    "KXHIGHMIA": Station("Miami", "KXHIGHMIA", "MIA", "MFL", 25.7959, -80.2870, "Etc/GMT+5", "USW00012839"),
 }
 
 

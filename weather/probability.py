@@ -7,13 +7,20 @@ over-confident above ~40%. The natural first guess was that the distribution
 needed fatter tails; that was tested (optional `df` param below, Student's t)
 and rejected — it didn't improve Brier score in any city and was worse in
 several. What actually explained the pattern: every city's day-1-ahead forecast
-runs systematically cold by 1.4-2.1°F, which alone produces exactly this
-miscalibration shape. `calibrated_bracket_probability` /
-`calibrated_probability_for_market` apply that fitted correction (see
-weather/calibration_params.py and kalshi-backtest-findings memory) — use those
-for anything live-facing instead of raw `fit_normal` output. Whichever path is
-used, "runs without error" is still not the same as "calibrated" — re-run the
-backtest after any further change here.
+runs systematically cold by 1.4-2.1°F on average, which alone produces exactly
+this miscalibration shape.
+
+v3 (2026-07-18): that average bias isn't stable across the year — NYC's flips
+sign entirely between winter (+2.7°F cold) and summer (-1.6°F warm), a pattern
+a single flat correction can't represent. Re-validated per city rather than
+assumed: NYC/Chicago/Denver's Brier score improves with a per-month bias,
+Philadelphia/Austin/Miami's seasonal swing is modest enough that a flat bias
+still wins (less estimation noise). `weather/calibration_params.py` encodes
+whichever won per city; `calibrated_bracket_probability` /
+`calibrated_probability_for_market` need the target month to look it up — use
+these for anything live-facing instead of raw `fit_normal` output. Whichever
+path is used, "runs without error" is still not the same as "calibrated" —
+re-run scripts/fit_calibration_params.py periodically as more data accumulates.
 """
 
 from __future__ import annotations
@@ -68,6 +75,25 @@ def bracket_probability(
     raise ValueError("Market has neither floor_strike nor cap_strike set — can't bound a bracket.")
 
 
+def temperature_in_bracket(actual_temp: float, floor_strike: float | None, cap_strike: float | None) -> bool:
+    """Whether an already-whole-degree actual reading falls inside this
+    bracket — the boolean counterpart to bracket_probability's boundary
+    convention (see that docstring): "less than 79" excludes 79 itself,
+    "between 79 and 80" includes both ends. Callers feeding in a value from a
+    source that isn't natively whole-degree Fahrenheit (e.g. NOAA CDO's
+    GHCND TMAX, converted server-side from tenths of Celsius) should round it
+    first — this function doesn't apply its own rounding, since whether that's
+    appropriate depends on the data source, not on bracket semantics.
+    """
+    if floor_strike is None and cap_strike is not None:
+        return actual_temp < cap_strike
+    if cap_strike is None and floor_strike is not None:
+        return actual_temp > floor_strike
+    if floor_strike is not None and cap_strike is not None:
+        return floor_strike <= actual_temp <= cap_strike
+    raise ValueError("Market has neither floor_strike nor cap_strike set — can't bound a bracket.")
+
+
 def check_boundary_language(rules_primary: str, floor_strike: float | None, cap_strike: float | None) -> None:
     """Cross-checks rules_primary prose against the structured strike fields.
 
@@ -110,15 +136,24 @@ def calibrated_bracket_probability(
     ensemble_mean: float,
     floor_strike: float | None,
     cap_strike: float | None,
+    target_month: int,
 ) -> float:
     """bracket_probability(), using the per-city bias/std correction fit from
-    the 2026-07-17 backtest instead of the raw live ensemble mean/std. Use this
+    the 2026-07-18 backtest instead of the raw live ensemble mean/std. Use this
     (or calibrated_probability_for_market) for anything live-facing — the raw
     ensemble mean runs cold and its std runs wide relative to what actually
     happened historically, both confirmed in the backtest.
+
+    `target_month` (1-12) is the settlement date's month, not today's — for a
+    market settling tomorrow that's usually the same, but always pass the
+    actual target date's month rather than assuming. Bias varies by season for
+    some cities (see module docstring); get_calibration's bias_for_month()
+    falls back to that city's flat bias for a month with insufficient fit data
+    or a city where the flat bias validated better overall.
     """
     params = get_calibration(series_ticker)
-    return bracket_probability(ensemble_mean + params.mean_bias, params.std, floor_strike, cap_strike)
+    bias = params.bias_for_month(target_month)
+    return bracket_probability(ensemble_mean + bias, params.std, floor_strike, cap_strike)
 
 
 def calibrated_probability_for_market(
@@ -127,9 +162,10 @@ def calibrated_probability_for_market(
     floor_strike: float | None,
     cap_strike: float | None,
     ensemble_mean: float,
+    target_month: int,
     *,
     validate_rules_text: bool = True,
 ) -> float:
     if validate_rules_text:
         check_boundary_language(rules_primary, floor_strike, cap_strike)
-    return calibrated_bracket_probability(series_ticker, ensemble_mean, floor_strike, cap_strike)
+    return calibrated_bracket_probability(series_ticker, ensemble_mean, floor_strike, cap_strike, target_month)

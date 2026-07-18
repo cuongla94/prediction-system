@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System Status — Kalshi Weather Signals</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <h1>System status</h1>
+      <a class="back-link" href="{{ url_for('index') }}">← Back to dashboard</a>
+    </div>
+    <p class="subtitle">Real execution history from generate_alerts / mark_settled_alerts / send_notifications — not inferred from data freshness alone.</p>
+  </header>
+
+  <div class="banner">
+    No scheduler is deployed yet (see deploy/README.md) — every run below reflects a manual/local
+    execution, not an automated cadence. The "stale after {{ stale_after_hours }}h" flag will mean
+    something once a cron schedule is actually running continuously; until then, don't read a gap
+    here as a failure.
+  </div>
+
+  {% if db_error %}
+  <div class="banner banner-warning">Can't reach the database right now: {{ db_error }}</div>
+  {% else %}
+
+  <section class="status-summary">
+    {% for script in known_scripts %}
+    {% set run = latest.get(script) %}
+    <div class="status-card status-card-{{ run.status if run else 'unknown' }}">
+      <h2>{{ script }}</h2>
+      {% if run is none %}
+      <p class="status-card-state">No runs recorded yet</p>
+      {% else %}
+      <p class="status-card-state">
+        {{ run.status|capitalize }}{% if stale.get(script) %} <span class="status-stale">· stale</span>{% endif %}
+      </p>
+      <p class="status-card-summary">{{ run.summary or '—' }}</p>
+      {% if run.detail %}<p class="status-card-detail">{{ run.detail }}</p>{% endif %}
+      <p class="status-card-time">Started {{ run.started_at.strftime('%b %-d, %Y %H:%M UTC') }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+
+  <section>
+    <h2>Recent runs</h2>
+    {% if not history %}
+    <p class="empty">No runs recorded yet.</p>
+    {% else %}
+    <div class="status-history-wrap">
+      <table class="status-history">
+        <thead>
+          <tr><th>Script</th><th>Started</th><th>Status</th><th>Summary</th></tr>
+        </thead>
+        <tbody>
+          {% for run in history %}
+          <tr>
+            <td>{{ run.script }}</td>
+            <td>{{ run.started_at.strftime('%b %-d, %H:%M UTC') }}</td>
+            <td><span class="status-badge status-{{ run.status }}">{{ run.status|capitalize }}</span></td>
+            <td>{{ run.summary or run.detail or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  {% endif %}
+</body>
+</html>

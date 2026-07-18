@@ -17,6 +17,7 @@ def _market(floor_strike: float | None, cap_strike: float | None) -> Market:
         no_bid_dollars=None,
         no_ask_dollars=None,
         last_price_dollars=None,
+        close_time=None,
         raw={},
     )
 

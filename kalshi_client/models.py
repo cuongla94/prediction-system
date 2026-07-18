@@ -73,6 +73,15 @@ class Market:
     no_bid_dollars: float | None
     no_ask_dollars: float | None
     last_price_dollars: float | None
+    # When trading actually stops (ISO8601 UTC) — this is `close_time`, not
+    # `expiration_time`/`latest_expiration_time` (a much later worst-case
+    # fallback if settlement data is delayed) or `expected_expiration_time`
+    # (when it's expected to settle/pay out, a distinct moment from "can I
+    # still trade this"). Confirmed live 2026-07-18 against a real open
+    # KXHIGHNY market: close_time landed at 11:59 PM ET the same day the
+    # market's own early_close_condition text describes, i.e. the deadline a
+    # trader actually cares about.
+    close_time: str | None
     raw: dict[str, Any] = field(repr=False)
 
     @classmethod
@@ -90,6 +99,7 @@ class Market:
             no_bid_dollars=_float_or_none(data, "no_bid_dollars"),
             no_ask_dollars=_float_or_none(data, "no_ask_dollars"),
             last_price_dollars=_float_or_none(data, "last_price_dollars"),
+            close_time=data.get("close_time"),
             raw=data,
         )
 

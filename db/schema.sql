@@ -40,6 +40,38 @@ create index if not exists alerts_created_at_idx on alerts (created_at desc);
 create index if not exists alerts_event_ticker_idx on alerts (event_ticker);
 create index if not exists alerts_unsettled_idx on alerts (event_ticker) where settled_at is null;
 
+-- Added 2026-07-18 for the dashboard's countdown-to-close timer. `create table
+-- if not exists` above only applies on a fresh database — this alter is what
+-- actually reaches an already-deployed `alerts` table, and is itself
+-- idempotent (safe to re-run schema.sql against a database that already has
+-- the column).
+alter table alerts add column if not exists close_time timestamptz;
+
+-- Added 2026-07-18 for scripts/send_notifications.py — a new row is inserted
+-- every pipeline run even for a bracket that's been actionable for days, so
+-- this can't just check "is_actionable on the latest row"; it needs to know
+-- whether a push notification already went out for this market today,
+-- tracked by stamping the row that triggered the send.
+alter table alerts add column if not exists notified_at timestamptz;
+
+-- Added 2026-07-18 for the dashboard's /status page (monitoring/run_tracker.py)
+-- — answers "is our system running well, any errors" from real execution
+-- history rather than just inferring it from alerts.created_at freshness.
+-- One row per script invocation, updated in place from 'running' to a final
+-- status once that invocation finishes (see monitoring/run_tracker.py).
+create table if not exists pipeline_runs (
+    id bigint generated always as identity primary key,
+    script text not null,
+    started_at timestamptz not null default now(),
+    finished_at timestamptz,
+    status text not null default 'running',  -- running | success | partial | failed
+    summary text,
+    detail text
+);
+
+create index if not exists pipeline_runs_started_at_idx on pipeline_runs (started_at desc);
+create index if not exists pipeline_runs_script_idx on pipeline_runs (script, started_at desc);
+
 -- One row per ensemble fetch (summary stats, not every member — the probability
 -- engine only needs mean/std downstream, and storing 100+ raw members per pull
 -- isn't worth the space until something actually needs per-member data).

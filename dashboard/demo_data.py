@@ -11,8 +11,10 @@ calibration-validated for live trading — see the dashboard's warning banner.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from edge.calculator import compute_edge
-from kalshi_client import market_url
+from kalshi_client import market_url, parse_event_date
 from weather.probability import calibrated_bracket_probability
 
 from .alert import Alert
@@ -23,6 +25,13 @@ _EVENT_TICKER = "KXHIGHNY-26JUL18"
 _CITY = "NYC"
 _KALSHI_URL = market_url(_SERIES_TICKER, _SERIES_TITLE, _EVENT_TICKER)
 _SNAPSHOT_TIME = "2026-07-17T23:00:00Z"
+_TARGET_MONTH = parse_event_date(_EVENT_TICKER).month
+# Unlike every other value here, this is NOT a frozen historical snapshot —
+# it's computed relative to whenever demo_alerts() actually runs, so the
+# dashboard's countdown timer always shows a plausible near-future close
+# instead of "closed 8 months ago" for anyone viewing the demo path long
+# after this file was written.
+_DEMO_CLOSE_TIME = (datetime.now(UTC) + timedelta(hours=14)).isoformat()
 
 # Pooled GFS+ECMWF+ICON ensemble for 2026-07-18, n=119 members.
 _ENSEMBLE_MEAN = 81.362185
@@ -132,7 +141,7 @@ def demo_alerts() -> list[Alert]:
         market_price = round((bracket["yes_bid"] + bracket["yes_ask"]) / 2, 4)
         model_probability = round(
             calibrated_bracket_probability(
-                _SERIES_TICKER, _ENSEMBLE_MEAN, bracket["floor_strike"], bracket["cap_strike"]
+                _SERIES_TICKER, _ENSEMBLE_MEAN, bracket["floor_strike"], bracket["cap_strike"], _TARGET_MONTH
             ),
             4,
         )
@@ -151,7 +160,7 @@ def demo_alerts() -> list[Alert]:
                 model_probability=model_probability,
                 ensemble_mean=_ENSEMBLE_MEAN,
                 ensemble_std=_ENSEMBLE_STD,
-                model_version="normal-v2-bias-corrected",
+                model_version="normal-v3-seasonal-bias",
                 calibration_validated=False,
                 market_yes_price=market_price,
                 edge=result.edge,
@@ -164,6 +173,7 @@ def demo_alerts() -> list[Alert]:
                 settled_at=None,
                 actual_high_temp=None,
                 actual_outcome=None,
+                close_time=_DEMO_CLOSE_TIME,
             )
         )
     alerts.sort(key=lambda a: (not a.is_actionable, -abs(a.edge)))

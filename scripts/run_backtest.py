@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from dotenv import load_dotenv
+
 from backtest.calibration import brier_score, bucket_calibration
-from backtest.harness import collect_rows, fit_empirical_normal, fit_student_t, split_by_date
+from backtest.cache import cached_collect_rows
+from backtest.harness import fit_empirical_normal, fit_student_t, split_by_date
 from kalshi_client import KalshiClient
 from weather.probability import bracket_probability
 from weather.stations import STATIONS
@@ -37,7 +40,7 @@ def run_for_city(client: KalshiClient, series_ticker: str) -> None:
     station = STATIONS[series_ticker]
     print(f"\n=== {station.city} ({series_ticker}) ===")
 
-    rows = collect_rows(client, series_ticker, START_DATE, END_DATE, lead_days=1)
+    rows = cached_collect_rows(client, series_ticker, START_DATE, END_DATE, lead_days=1)
     if not rows:
         print("  no usable rows, skipping.")
         return
@@ -81,6 +84,7 @@ def run_for_city(client: KalshiClient, series_ticker: str) -> None:
 
 
 def main() -> None:
+    load_dotenv()
     with KalshiClient() as client:
         for series_ticker in STATIONS:
             run_for_city(client, series_ticker)

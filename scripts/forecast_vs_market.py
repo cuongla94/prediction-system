@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import sys
 
+from dotenv import load_dotenv
+
 from kalshi_client import KalshiClient, parse_event_date, taker_fee
 from weather.open_meteo import fetch_daily_max_ensemble
 from weather.probability import calibrated_probability_for_market, check_boundary_language, fit_normal
@@ -20,6 +22,7 @@ from weather.stations import get_station
 
 
 def main() -> None:
+    load_dotenv()
     series_ticker = sys.argv[1] if len(sys.argv) > 1 else "KXHIGHNY"
     station = get_station(series_ticker)
 
@@ -53,7 +56,7 @@ def main() -> None:
             print(f"  WARNING: {market.ticker}: {exc}")
 
         model_probability = calibrated_probability_for_market(
-            series_ticker, market.rules_primary, market.floor_strike, market.cap_strike, mean
+            series_ticker, market.rules_primary, market.floor_strike, market.cap_strike, mean, event_date.month
         )
         if market.yes_bid_dollars is None or market.yes_ask_dollars is None:
             continue
