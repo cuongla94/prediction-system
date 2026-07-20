@@ -5,9 +5,11 @@ import pytest
 from backtest.harness import (
     BacktestRow,
     _repair_missing_strikes,
+    collect_dated_residuals_with_spread,
     collect_residuals,
     fit_empirical_normal,
     fit_monthly_bias,
+    fit_spread_scale,
     fit_student_t,
     split_by_date,
 )
@@ -191,6 +193,53 @@ def test_fit_monthly_bias_dedupes_multiple_brackets_per_day():
     ]
     monthly = fit_monthly_bias(rows, min_samples=2)
     assert monthly[3] == pytest.approx(2.0)
+
+
+def test_collect_dated_residuals_with_spread_carries_spread_and_dedupes():
+    rows = [
+        _row("2026-01-01", forecast_mean=80.0, approx_actual_temp=82.0, forecast_spread=1.5),
+        _row("2026-01-01", forecast_mean=80.0, approx_actual_temp=82.0, forecast_spread=1.5),  # same day
+        _row("2026-01-02", forecast_mean=80.0, approx_actual_temp=78.0, forecast_spread=4.0),
+    ]
+    result = collect_dated_residuals_with_spread(rows)
+    assert result == [("2026-01-01", 2.0, 1.5), ("2026-01-02", -2.0, 4.0)]
+
+
+def test_fit_spread_scale_finds_a_positive_coef_when_disagreement_predicts_error():
+    # High cross-model spread days have large errors, low-spread days small
+    # ones — so the fitted spread_coef should come out positive (disagreement
+    # is a real predictor of that day's error). Residuals average to 0 so the
+    # bias-centering is a no-op and the relationship is clean.
+    rows = [
+        _row("2026-01-01", approx_actual_temp=80.5, forecast_spread=1.0),  # +0.5, low spread
+        _row("2026-01-02", approx_actual_temp=79.5, forecast_spread=1.0),  # -0.5, low spread
+        _row("2026-01-03", approx_actual_temp=83.0, forecast_spread=3.0),  # +3.0, high spread
+        _row("2026-01-04", approx_actual_temp=77.0, forecast_spread=3.0),  # -3.0, high spread
+    ]
+    baseline_var, spread_coef = fit_spread_scale(rows)
+    assert spread_coef > 0
+    assert baseline_var >= 0.25  # floored, never degenerate
+
+
+def test_fit_spread_scale_clamps_coef_to_zero_when_disagreement_does_not_help():
+    # The reverse relationship (high spread, small error): the honest answer is
+    # "spread doesn't predict error," so spread_coef must clamp to 0 rather than
+    # perversely *narrowing* the distribution on high-disagreement days.
+    rows = [
+        _row("2026-01-01", approx_actual_temp=83.0, forecast_spread=1.0),  # +3.0, low spread
+        _row("2026-01-02", approx_actual_temp=77.0, forecast_spread=1.0),  # -3.0, low spread
+        _row("2026-01-03", approx_actual_temp=80.5, forecast_spread=3.0),  # +0.5, high spread
+        _row("2026-01-04", approx_actual_temp=79.5, forecast_spread=3.0),  # -0.5, high spread
+    ]
+    baseline_var, spread_coef = fit_spread_scale(rows)
+    assert spread_coef == pytest.approx(0.0)
+    # Falls back to the pooled variance of the (zero-mean) residuals.
+    assert baseline_var == pytest.approx((9.0 + 9.0 + 0.25 + 0.25) / 4)
+
+
+def test_fit_spread_scale_requires_at_least_three_days():
+    with pytest.raises(ValueError):
+        fit_spread_scale([_row("2026-01-01"), _row("2026-01-02")])
 
 
 # _repair_missing_strikes — modeled directly on real broken ladders found live

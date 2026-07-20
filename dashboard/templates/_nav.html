@@ -31,7 +31,7 @@
             <a href="#row-{{ alert.market_ticker | replace('.', '-') }}">
               <span class="bell-side side-badge side-{{ alert.side|lower }}">{{ alert.side }}</span>
               <span class="bell-label">{{ alert.city }} {{ alert.bracket_label }}</span>
-              <span class="bell-pct tnum {{ 'pnl-positive' if alert.edge >= 0 else 'pnl-negative' }}">{{ "%+.1f%%"|format(alert.edge * 100) }}</span>
+              <span class="bell-pct tnum {{ 'pnl-positive' if alert.display_edge >= 0 else 'pnl-negative' }}">{{ "%+.1f%%"|format(alert.display_edge * 100) }}</span>
             </a>
           </li>
           {% endfor %}

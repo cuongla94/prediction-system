@@ -146,7 +146,9 @@ create table if not exists paper_trades (
     status text not null default 'open',  -- 'open' | 'closed'
     closed_at timestamptz,
     -- 'settled_win' | 'settled_loss' | 'edge_closed' (sold early once the
-    -- model's own edge for this side hit zero — see paper_trading/engine.py)
+    -- model's own edge for this side reversed past a buffer) | 'take_profit'
+    -- (sold a winner early at a gain threshold, only when that opt-in rule is
+    -- enabled) — see paper_trading/engine.py.
     close_reason text,
     exit_price double precision,
     exit_fee double precision,

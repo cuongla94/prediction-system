@@ -366,3 +366,111 @@ def test_reserve_floor_does_not_shrink_as_cash_is_spent_within_one_cycle():
     # stays fixed; only how much of cash_available clears it changes.
     assert deployable_cash(60.0, 100.0, reserve_fraction=0.25) == pytest.approx(35.0)
     assert deployable_cash(20.0, 100.0, reserve_fraction=0.25) == 0.0
+
+
+# --- cross-city correlated-day exposure cap (max_correlated_exposure) ---
+
+
+def test_day_exposure_cap_limits_correlated_same_date_spend():
+    # Two different cities, same target date (26JUL26 via _alert) = one
+    # correlated cluster. A $5 per-date cap should bound their combined cost
+    # basis no matter how much cash is free — the protection the per-event cap
+    # can't give, since these are separate events.
+    a = _alert(ticker="A1", event="KXHIGHNY", model_probability=0.70, market_yes_price=0.30, edge=0.40)
+    b = _alert(ticker="B1", event="KXHIGHCHI", model_probability=0.70, market_yes_price=0.30, edge=0.40)
+    positions = plan_new_positions(
+        [a, b], already_traded=set(), cash_available=100.0, max_correlated_exposure=5.0, now=NOW
+    )
+    assert sum(p.cost_basis for p in positions) <= 5.0 + 1e-9
+
+
+def test_day_exposure_cap_counts_existing_open_positions():
+    # $4.95 of the $5 date budget is already committed from an earlier cycle,
+    # so a new $0.30 bracket can't fit even one contract in the ~$0.05 left —
+    # the cap is a standing limit across cycles, not per-run.
+    a = _alert(ticker="A1", event="KXHIGHNY", model_probability=0.70, market_yes_price=0.30, edge=0.40)
+    positions = plan_new_positions(
+        [a],
+        already_traded=set(),
+        cash_available=100.0,
+        max_correlated_exposure=5.0,
+        existing_exposure_by_date={"2026-07-26": 4.95},
+        now=NOW,
+    )
+    assert positions == []
+
+
+def test_day_exposure_cap_is_per_date_not_global():
+    # Two cities on *different* dates each get their own full budget, so both
+    # fund even though either alone would nearly exhaust a single $5 cap.
+    a = _alert(ticker="A1", event="KXHIGHNY", model_probability=0.70, market_yes_price=0.30, edge=0.40)
+    b = OpenAlert(
+        market_ticker="B1",
+        event_ticker="KXHIGHCHI-26JUL27",
+        series_ticker="KXHIGHCHI",
+        city="Chicago",
+        bracket_label="79-80°",
+        side="YES",
+        model_probability=0.70,
+        market_yes_price=0.30,
+        edge=0.40,
+        is_actionable=True,
+    )
+    positions = plan_new_positions(
+        [a, b], already_traded=set(), cash_available=100.0, max_correlated_exposure=5.0, now=NOW
+    )
+    assert {p.market_ticker for p in positions} == {"A1", "B1"}
+
+
+def test_generous_day_cap_does_not_change_sizing():
+    # A cap far above what a single bracket would ever cost must leave sizing
+    # identical to the no-cap path — the cap only ever constrains, never grows.
+    a = _alert(ticker="A1", event="KXHIGHNY", model_probability=0.70, market_yes_price=0.30, edge=0.40)
+    uncapped = plan_new_positions([a], already_traded=set(), cash_available=100.0, now=NOW)
+    generous = plan_new_positions(
+        [a], already_traded=set(), cash_available=100.0, max_correlated_exposure=1000.0, now=NOW
+    )
+    assert generous[0].contracts == uncapped[0].contracts
+    assert generous[0].cost_basis == pytest.approx(uncapped[0].cost_basis)
+
+
+# --- take-profit (opt-in, off by default) ---
+
+
+def test_take_profit_exits_a_winner_even_when_edge_still_favors_holding():
+    # Bought at cost $3, now marked at 0.80 -> a ~$4.9 gain; the model still
+    # (barely) likes YES (edge +0.05), so edge_closed would hold. With
+    # take-profit at 50% of cost basis enabled, bank the gain instead.
+    pos = OpenPosition(id=1, market_ticker="T1", side="YES", contracts=10, cost_basis=3.0)
+    current = _alert(ticker="T1", model_probability=0.85, market_yes_price=0.80, edge=0.05)
+    decisions = plan_exits([pos], {"T1": current}, now=NOW, take_profit_fraction=0.5)
+    assert len(decisions) == 1
+    assert decisions[0].close_reason == "take_profit"
+
+
+def test_take_profit_disabled_by_default_holds_the_same_winner():
+    pos = OpenPosition(id=1, market_ticker="T1", side="YES", contracts=10, cost_basis=3.0)
+    current = _alert(ticker="T1", model_probability=0.85, market_yes_price=0.80, edge=0.05)
+    decisions = plan_exits([pos], {"T1": current}, now=NOW)  # default fraction 0.0 = off
+    assert decisions == []
+
+
+def test_take_profit_not_triggered_below_threshold():
+    # Up only ~$0.34 on a $3 cost basis — well under the 50% take-profit bar,
+    # and the edge still strongly favors YES, so hold.
+    pos = OpenPosition(id=1, market_ticker="T1", side="YES", contracts=10, cost_basis=3.0)
+    current = _alert(ticker="T1", model_probability=0.85, market_yes_price=0.35, edge=0.50)
+    decisions = plan_exits([pos], {"T1": current}, now=NOW, take_profit_fraction=0.5)
+    assert decisions == []
+
+
+def test_take_profit_still_holds_inside_the_settlement_window():
+    # A winner this close to close_time rides to settlement (fee-free) rather
+    # than paying a taker fee to exit early — the hold window wins over
+    # take-profit, same as it does over edge_closed.
+    pos = OpenPosition(id=1, market_ticker="T1", side="YES", contracts=10, cost_basis=3.0)
+    current = _alert(
+        ticker="T1", model_probability=0.85, market_yes_price=0.80, edge=0.05, close_time=NOW + timedelta(minutes=5)
+    )
+    decisions = plan_exits([pos], {"T1": current}, now=NOW, take_profit_fraction=0.5)
+    assert decisions == []

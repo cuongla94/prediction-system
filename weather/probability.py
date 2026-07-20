@@ -75,6 +75,46 @@ def bracket_probability(
     raise ValueError("Market has neither floor_strike nor cap_strike set — can't bound a bracket.")
 
 
+def heteroscedastic_scale(baseline_var: float, spread_coef: float, forecast_spread: float) -> float:
+    """Per-day forecast std as sqrt(baseline_var + spread_coef * spread^2),
+    floored the same way fit_normal floors its std.
+
+    `baseline_var` is the day-independent error variance; `spread_coef` scales
+    the live ensemble's own cross-model disagreement (`forecast_spread`) into
+    extra variance on days the models diverge. The whole point is that a day
+    the models agree on and a day they don't shouldn't get the same fixed
+    confidence — which the current per-city fixed std (calibrated_bracket_
+    probability) structurally can't express. Both params come from
+    backtest.harness.fit_spread_scale, fit on data the eval set is held out
+    from, not guessed; `spread_coef == 0` collapses this back to a constant
+    sqrt(baseline_var), i.e. exactly the fixed-std behavior.
+    """
+    return max((baseline_var + spread_coef * forecast_spread**2) ** 0.5, _MIN_STD)
+
+
+def heteroscedastic_bracket_probability(
+    loc: float,
+    baseline_var: float,
+    spread_coef: float,
+    forecast_spread: float,
+    floor_strike: float | None,
+    cap_strike: float | None,
+) -> float:
+    """bracket_probability with a per-day scale from heteroscedastic_scale
+    instead of a fixed std.
+
+    Deliberately NOT wired into the live pipeline yet: generate_alerts.py still
+    uses the fixed-std calibrated_* path. This exists for scripts/run_backtest.py
+    to evaluate against the fixed-std Normal baseline on real settled data
+    first. Promote it to live use only if that comparison shows a real Brier
+    improvement — the same bar the Student's t alternative had to clear (and
+    failed). "Runs without error" is not "calibrated," exactly as this module's
+    own docstring warns.
+    """
+    scale = heteroscedastic_scale(baseline_var, spread_coef, forecast_spread)
+    return bracket_probability(loc, scale, floor_strike, cap_strike)
+
+
 def temperature_in_bracket(actual_temp: float, floor_strike: float | None, cap_strike: float | None) -> bool:
     """Whether an already-whole-degree actual reading falls inside this
     bracket — the boolean counterpart to bracket_probability's boundary

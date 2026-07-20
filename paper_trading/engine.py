@@ -114,6 +114,38 @@ DEFAULT_CASH_RESERVE_FRACTION = 0.25
 # from.
 DEFAULT_EXCLUDE_SAME_DAY = True
 
+# Fraction of the *total* bankroll allowed into new positions that share one
+# target date, across every city, in a single cycle. A cap on correlated
+# same-day exposure that sizing/kelly.py's per-event cap (MAX_EVENT_EXPOSURE)
+# structurally can't see: the event cap correctly stops one city's ladder
+# from over-concentrating, but a single weather pattern moves many cities'
+# brackets the same direction on the same night, so "one bad night" can still
+# be most of the bankroll even with every event individually capped — which
+# is exactly the shape of the 0/57 wipeout. Keyed by target date because
+# that's the real correlation unit: all the cities' brackets for the same
+# calendar day are one bet on one synoptic pattern, not N independent ones.
+# Seeded with already-open positions' exposure per date (see
+# plan_new_positions' `existing_exposure_by_date`), so it's a standing cap
+# across cycles, not just within a single one. 0.35 is a moderately
+# conservative starting point — meaningfully tighter than the ~75% one night
+# could otherwise consume after the 25% reserve — not derived from a
+# backtest; configurable, same as the other risk knobs here.
+DEFAULT_MAX_DAY_EXPOSURE_FRACTION = 0.35
+
+# Take-profit: sell a *winning* position early once its realizable gain (after
+# the exit fee) reaches this fraction of cost basis, even when the model's own
+# edge still favors holding. Off by default (0.0 disables it) on purpose. The
+# bot's core early-exit rule (plan_exits' `edge_closed`) is EV-maximizing — it
+# holds a winner as long as the model still thinks the price is on our side —
+# and banking a gain before then trades expected value for lower variance.
+# That's a real, deliberate risk-preference choice, not a strict improvement,
+# so it stays opt-in rather than silently changing what this bot is meant to
+# measure (whether the signals themselves make money). When enabled, its use
+# is to damp the swing of a correlated-loss night by locking in the winners
+# that partly offset it — a complement to DEFAULT_MAX_DAY_EXPOSURE_FRACTION,
+# not a replacement.
+DEFAULT_TAKE_PROFIT_FRACTION = 0.0
+
 
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
@@ -158,6 +190,26 @@ def cash_reserve_fraction_setting() -> float:
 
 def exclude_same_day_setting() -> bool:
     return _env_bool("PAPER_TRADING_EXCLUDE_SAME_DAY", DEFAULT_EXCLUDE_SAME_DAY)
+
+
+def max_day_exposure_fraction_setting() -> float:
+    return _env_float("PAPER_TRADING_MAX_DAY_EXPOSURE", DEFAULT_MAX_DAY_EXPOSURE_FRACTION)
+
+
+def take_profit_fraction_setting() -> float:
+    return _env_float("PAPER_TRADING_TAKE_PROFIT_FRACTION", DEFAULT_TAKE_PROFIT_FRACTION)
+
+
+def event_date_key(event_ticker: str) -> str:
+    """The correlation-grouping key for cross-city day exposure: an event's own
+    calendar date (ISO), so every city's brackets for the same day share one
+    budget in plan_new_positions. Falls back to the raw event_ticker for an
+    unparseable one, so such an event caps only against itself rather than
+    silently joining — or corrupting — a real date bucket."""
+    try:
+        return parse_event_date(event_ticker).isoformat()
+    except ValueError:
+        return event_ticker
 
 
 def _is_same_day(alert: OpenAlert, *, now: datetime) -> bool:
@@ -281,6 +333,8 @@ def plan_new_positions(
     max_entry_price: float | None = None,
     min_edge: float | None = None,
     exclude_same_day: bool | None = None,
+    max_correlated_exposure: float | None = None,
+    existing_exposure_by_date: dict[str, float] | None = None,
     now: datetime | None = None,
 ) -> list[NewPosition]:
     """Sizes and selects new positions for this cycle's actionable alerts.
@@ -308,6 +362,17 @@ def plan_new_positions(
     opportunities get funded before weaker ones, rather than whichever
     event happened to iterate first.
 
+    `max_correlated_exposure` (when set) is a hard dollar cap on total new
+    exposure per *target date* across every city — the cross-city
+    correlated-day cap the per-event cap can't see (see
+    `DEFAULT_MAX_DAY_EXPOSURE_FRACTION`). `existing_exposure_by_date` seeds
+    that per-date tally with already-open positions' cost basis (keyed by
+    `event_date_key`), making it a standing cap across cycles rather than one
+    that resets every run. Because events are visited strongest-edge-first
+    and share the running per-date budget, the best brackets in a crowded day
+    get funded before weaker ones once the day's cap binds. Left None, this
+    cap is simply not applied and behavior is unchanged.
+
     The Kelly percentage itself is computed against the stable `cash_available`
     snapshot for the whole cycle (matching how the dashboard sizes against a
     snapshot bankroll), not the shrinking running total — only affordability
@@ -323,6 +388,11 @@ def plan_new_positions(
     exclude_same_day_val = exclude_same_day_setting() if exclude_same_day is None else exclude_same_day
     now_val = now if now is not None else datetime.now(UTC)
     remaining_cash = cash_available
+    # Per-target-date exposure already committed (open positions this seeds in,
+    # plus whatever this cycle adds below). Only consulted when
+    # max_correlated_exposure is set; maintained unconditionally so the two
+    # code paths don't diverge.
+    deployed_by_date: dict[str, float] = dict(existing_exposure_by_date or {})
     positions: list[NewPosition] = []
 
     by_event: dict[str, list[OpenAlert]] = {}
@@ -359,22 +429,35 @@ def plan_new_positions(
             if price < min_entry_price_val or price > max_entry_price_val:
                 continue
 
-            dollars = min(recommended_dollars(rec.recommended_fraction, cash_available), remaining_cash)
-            contracts = math.floor(dollars / price)
+            # Room left in this alert's target-date budget after already-open
+            # and this-cycle positions for the same day. None when the
+            # cross-city cap is disabled, in which case only cash constrains.
+            day_key = event_date_key(alert.event_ticker)
+            day_room = None
+            if max_correlated_exposure is not None:
+                day_room = round(max_correlated_exposure - deployed_by_date.get(day_key, 0.0), 4)
+                if day_room <= 0:
+                    continue
+
+            budget = min(recommended_dollars(rec.recommended_fraction, cash_available), remaining_cash)
+            if day_room is not None:
+                budget = min(budget, day_room)
+            contracts = math.floor(budget / price)
             if contracts < 1:
                 continue
 
             entry_fee = taker_fee(price, contracts)
             cost_basis = round(contracts * price + entry_fee, 4)
-            if cost_basis > remaining_cash:
-                # The fee pushed it just over what's left — try one fewer
-                # contract rather than dropping the trade outright.
+            if cost_basis > remaining_cash or (day_room is not None and cost_basis > day_room):
+                # The fee pushed it just over what's left (cash) or over the
+                # day budget — try one fewer contract rather than dropping the
+                # trade outright.
                 contracts -= 1
                 if contracts < 1:
                     continue
                 entry_fee = taker_fee(price, contracts)
                 cost_basis = round(contracts * price + entry_fee, 4)
-                if cost_basis > remaining_cash:
+                if cost_basis > remaining_cash or (day_room is not None and cost_basis > day_room):
                     continue
 
             positions.append(
@@ -394,6 +477,7 @@ def plan_new_positions(
                 )
             )
             remaining_cash = round(remaining_cash - cost_basis, 4)
+            deployed_by_date[day_key] = round(deployed_by_date.get(day_key, 0.0) + cost_basis, 4)
 
     return positions
 
@@ -405,21 +489,32 @@ def plan_exits(
     now: datetime | None = None,
     exit_edge_buffer: float | None = None,
     hold_near_settlement_minutes: float | None = None,
+    take_profit_fraction: float | None = None,
 ) -> list[ExitDecision]:
-    """Three-way decision per open position, not just "exit or hold": HOLD
-    (default — the edge still favors our side, or we're too close to
-    settlement for an early exit to be worth its fee), SELL (the edge has
+    """Decision per open position: HOLD (default — the edge still favors our
+    side and we're not banking a gain, or we're too close to settlement for
+    an early exit to be worth its fee), SELL for `edge_closed` (the edge has
     moved meaningfully past our side, with real time left for that to
-    matter), or leave it for `plan_settlements` once the market actually
-    resolves ("leave it till the timer is up"). A ticker with no current
-    alert this cycle (e.g. it dropped out of the open-events window) is left
-    alone here regardless; settlement will catch it once it resolves.
+    matter), SELL for `take_profit` (only when that's enabled — a winner
+    whose realizable gain has reached the take-profit threshold even though
+    the edge would still hold it, see `DEFAULT_TAKE_PROFIT_FRACTION`), or
+    leave it for `plan_settlements` once the market actually resolves ("leave
+    it till the timer is up"). A ticker with no current alert this cycle
+    (e.g. it dropped out of the open-events window) is left alone here
+    regardless; settlement will catch it once it resolves.
+
+    `edge_closed` takes precedence over `take_profit` when both would fire, so
+    a sell driven by the model turning against us is labelled for that reason
+    rather than for the incidental gain — take-profit exists specifically for
+    the case `edge_closed` does *not* catch (up on the position, but the model
+    still likes it).
     """
     now = now if now is not None else datetime.now(UTC)
     buffer_val = exit_edge_buffer_setting() if exit_edge_buffer is None else exit_edge_buffer
     hold_minutes_val = (
         hold_near_settlement_minutes_setting() if hold_near_settlement_minutes is None else hold_near_settlement_minutes
     )
+    take_profit_val = take_profit_fraction_setting() if take_profit_fraction is None else take_profit_fraction
 
     decisions = []
     for pos in positions:
@@ -430,21 +525,27 @@ def plan_exits(
         if current.close_time is not None and current.close_time - now <= timedelta(minutes=hold_minutes_val):
             continue  # close enough to settlement that an early exit isn't worth the fee — hold for the real result
 
-        edge_on_our_side = current.edge if pos.side == "YES" else -current.edge
-        if edge_on_our_side > -buffer_val:
-            continue  # still favors our side, or has only barely ticked past zero — keep holding
-
         exit_price = current.market_yes_price if pos.side == "YES" else 1 - current.market_yes_price
         exit_fee = taker_fee(exit_price, pos.contracts)
         payout = round(pos.contracts * exit_price - exit_fee, 4)
+        realized_pnl = round(payout - pos.cost_basis, 4)
+
+        edge_on_our_side = current.edge if pos.side == "YES" else -current.edge
+        if edge_on_our_side <= -buffer_val:
+            close_reason = "edge_closed"  # market moved meaningfully past our side
+        elif take_profit_val > 0 and pos.cost_basis > 0 and realized_pnl >= take_profit_val * pos.cost_basis:
+            close_reason = "take_profit"  # up enough to bank it, even though the edge would still hold
+        else:
+            continue  # still favors our side and not enough gain to lock in — keep holding
+
         decisions.append(
             ExitDecision(
                 id=pos.id,
                 exit_price=exit_price,
                 exit_fee=exit_fee,
                 payout=payout,
-                realized_pnl=round(payout - pos.cost_basis, 4),
-                close_reason="edge_closed",
+                realized_pnl=realized_pnl,
+                close_reason=close_reason,
             )
         )
     return decisions

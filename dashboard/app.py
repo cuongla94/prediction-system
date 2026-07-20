@@ -245,6 +245,24 @@ def _settlement_source_url(alert: Alert) -> str:
     return get_station(alert.series_ticker).settlement_source_url
 
 
+# Below this many settled days behind a series' calibration, an alert card
+# flags its history as thin (see weather/calibration_params.py fit_days). The
+# original 6 High Temperature cities sit at 420+, while the 14 newer cities
+# and every Low Temperature series are far below — so the identical "98% win
+# chance" is a much weaker claim on a thin series, and the card should say so.
+_THIN_SAMPLE_DAYS = 200
+
+
+def _calibration_fit_days(alert: Alert) -> int | None:
+    """settled-day count behind this alert's city/metric calibration, or None
+    for a series with no fitted params (shouldn't happen for a live alert, but
+    degrade to "no badge" rather than raising)."""
+    try:
+        return get_calibration(alert.series_ticker).fit_days
+    except KeyError:
+        return None
+
+
 # All timestamps are stored/read as UTC-aware (confirmed live: psycopg
 # returns timezone.utc for timestamptz columns) — this is the one place that
 # converts for display. Real IANA zone, not a fixed UTC-7 offset, so it
@@ -261,6 +279,8 @@ def _pacific(dt: datetime | None, fmt: str = "%b %-d, %Y %H:%M %Z") -> str:
 
 app.jinja_env.globals["reasoning_text"] = _reasoning_text
 app.jinja_env.globals["settlement_source_url"] = _settlement_source_url
+app.jinja_env.globals["calibration_fit_days"] = _calibration_fit_days
+app.jinja_env.globals["THIN_SAMPLE_DAYS"] = _THIN_SAMPLE_DAYS
 app.jinja_env.filters["pacific"] = _pacific
 
 
@@ -453,6 +473,13 @@ def backtest():
     noaa_run = latest.get("validate_against_noaa")
     noaa_rows = _parse_json_detail(noaa_run) or []
     noaa_mismatch_lines = [line for row in noaa_rows for line in (row.get("mismatch_lines") or [])]
+    # run_backtest.py stores its per-city Brier + pooled reliability diagram as
+    # a JSON dict (not a list, unlike the two above) in pipeline_runs.detail —
+    # see build_backtest_detail. It isn't a scheduled pipeline script, so it's
+    # not in _KNOWN_SCRIPTS, but _pipeline_status returns the latest run of
+    # every script that has ever run, including this one.
+    backtest_run = latest.get("run_backtest")
+    reliability = _parse_json_detail(backtest_run)
     return render_template(
         "backtest.html",
         db_error=db_error,
@@ -461,6 +488,8 @@ def backtest():
         calibration_rows=_calibration_rows(_parse_json_detail(calibration_run)),
         noaa_rows=noaa_rows,
         noaa_mismatch_lines=noaa_mismatch_lines,
+        backtest_run=backtest_run,
+        reliability=reliability if isinstance(reliability, dict) else None,
     )
 
 

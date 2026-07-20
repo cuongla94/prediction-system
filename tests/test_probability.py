@@ -9,6 +9,8 @@ from weather.probability import (
     calibrated_probability_for_market,
     check_boundary_language,
     fit_normal,
+    heteroscedastic_bracket_probability,
+    heteroscedastic_scale,
     probability_for_market,
     temperature_in_bracket,
 )
@@ -198,6 +200,52 @@ def test_temperature_in_bracket_between_includes_both_ends():
 def test_temperature_in_bracket_requires_a_bound():
     with pytest.raises(ValueError):
         temperature_in_bracket(80.0, floor_strike=None, cap_strike=None)
+
+
+def test_heteroscedastic_scale_zero_coef_is_a_constant_std():
+    # spread_coef == 0 must collapse to a plain fixed std of sqrt(baseline_var),
+    # independent of the day's spread — that's the "fixed std" fallback.
+    baseline_var = 4.0  # -> std 2.0
+    low = heteroscedastic_scale(baseline_var, spread_coef=0.0, forecast_spread=0.0)
+    high = heteroscedastic_scale(baseline_var, spread_coef=0.0, forecast_spread=9.0)
+    assert low == pytest.approx(2.0)
+    assert high == pytest.approx(2.0)
+
+
+def test_heteroscedastic_scale_widens_with_disagreement():
+    # A positive spread_coef must make a high-disagreement day less confident
+    # (wider) than a low-disagreement one.
+    calm = heteroscedastic_scale(4.0, spread_coef=1.0, forecast_spread=0.0)
+    stormy = heteroscedastic_scale(4.0, spread_coef=1.0, forecast_spread=3.0)
+    assert stormy > calm
+    assert stormy == pytest.approx((4.0 + 1.0 * 9.0) ** 0.5)
+
+
+def test_heteroscedastic_scale_is_floored_like_fit_normal():
+    # A degenerate near-zero variance can't produce a sub-0.5 std, matching
+    # fit_normal's _MIN_STD floor.
+    assert heteroscedastic_scale(0.0, spread_coef=0.0, forecast_spread=0.0) >= 0.5
+
+
+def test_heteroscedastic_bracket_probability_matches_bracket_probability_at_its_scale():
+    # The heteroscedastic path is just bracket_probability at the blended scale,
+    # so it must agree with calling bracket_probability with that scale directly.
+    loc, baseline_var, spread_coef, spread = 82.0, 9.0, 0.5, 2.0
+    scale = heteroscedastic_scale(baseline_var, spread_coef, spread)
+    direct = bracket_probability(loc, scale, floor_strike=81.0, cap_strike=82.0)
+    blended = heteroscedastic_bracket_probability(
+        loc, baseline_var, spread_coef, spread, floor_strike=81.0, cap_strike=82.0
+    )
+    assert blended == pytest.approx(direct)
+
+
+def test_heteroscedastic_ladder_partition_sums_to_one():
+    # The same partition invariant every distribution here must satisfy.
+    brackets = [(None, 79.0), (79.0, 80.0), (81.0, 82.0), (83.0, 84.0), (85.0, 86.0), (86.0, None)]
+    total = sum(
+        heteroscedastic_bracket_probability(82.0, 9.0, 0.5, 2.0, floor, cap) for floor, cap in brackets
+    )
+    assert total == pytest.approx(1.0, abs=1e-9)
 
 
 def test_calibrated_probability_for_market_runs_the_cross_check():

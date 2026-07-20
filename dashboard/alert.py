@@ -80,6 +80,25 @@ class Alert:
         return self.model_probability
 
     @property
+    def display_edge(self) -> float:
+        """The edge of the trade we'd actually recommend (the `side`
+        position), signed so it reads coherently next to `win_probability` on
+        the card. `edge` itself is always model_probability - market_yes_price,
+        i.e. the *YES* side's edge, no matter which side we're recommending —
+        so a NO pick (edge < 0) shown with the raw `edge` puts a negative
+        number next to a high "win chance," which reads as a contradiction
+        even though it isn't. The NO trade's own edge is the mirror image
+        ((1 - model) - (1 - market) = market - model = -edge), so this flips
+        the sign for a NO recommendation to show the edge of the bet we're
+        suggesting — the same reframing `win_probability` already applies to
+        the win side. The details modal still shows the raw `edge` alongside
+        Model and Market, where a signed model-minus-market difference is
+        exactly the point; this is only for the summary line, which has
+        neither number beside it for context.
+        """
+        return -self.edge if self.side == "NO" else self.edge
+
+    @property
     def metric_label(self) -> str:
         """"highest"/"lowest", for natural-language phrasing — see `metric`."""
         return "lowest" if self.metric == "min" else "highest"

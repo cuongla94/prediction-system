@@ -28,6 +28,8 @@ from paper_trading import (
     OpenPosition,
     SettledPosition,
     deployable_cash,
+    event_date_key,
+    max_day_exposure_fraction_setting,
     plan_exits,
     plan_new_positions,
     plan_settlements,
@@ -78,6 +80,21 @@ def _fetch_open_positions(cur: psycopg.Cursor) -> list[OpenPosition]:
         OpenPosition(id=id_, market_ticker=ticker, side=side, contracts=contracts, cost_basis=cost_basis)
         for id_, ticker, side, contracts, cost_basis in cur.fetchall()
     ]
+
+
+def _existing_exposure_by_date(cur: psycopg.Cursor) -> dict[str, float]:
+    """Cost basis of still-open positions, grouped by their event's target date
+    (event_date_key) — seeds plan_new_positions' cross-city day cap so it
+    counts positions opened in earlier cycles too, making the cap a standing
+    limit on correlated same-day exposure rather than one that resets every
+    run. Called after settlements/exits have closed this cycle's resolved
+    positions, so it reflects only what's genuinely still open."""
+    cur.execute("select event_ticker, cost_basis from paper_trades where status = 'open'")
+    exposure: dict[str, float] = {}
+    for event_ticker, cost_basis in cur.fetchall():
+        key = event_date_key(event_ticker)
+        exposure[key] = round(exposure.get(key, 0.0) + float(cost_basis), 4)
+    return exposure
 
 
 def _fetch_outcomes(cur: psycopg.Cursor, tickers: list[str]) -> dict[str, bool]:
@@ -197,10 +214,21 @@ def main() -> int:
             already_traded = {row[0] for row in cur.fetchall()}
             cash_available = _current_cash(cur)
             total_bankroll = _total_bankroll(cur)
+            existing_exposure_by_date = _existing_exposure_by_date(cur)
 
         deployable = deployable_cash(cash_available, total_bankroll)
         reserve_held = round(cash_available - deployable, 2)
-        new_positions = plan_new_positions(open_alerts, already_traded, deployable)
+        # Cross-city correlated-day cap, as a fraction of total bankroll (not
+        # idle cash) — the same total_bankroll basis the reserve is pinned to,
+        # so both risk limits move only on real P&L, not on reallocation.
+        max_day_exposure = round(total_bankroll * max_day_exposure_fraction_setting(), 4)
+        new_positions = plan_new_positions(
+            open_alerts,
+            already_traded,
+            deployable,
+            max_correlated_exposure=max_day_exposure,
+            existing_exposure_by_date=existing_exposure_by_date,
+        )
         if new_positions:
             with conn.cursor() as cur:
                 for p in new_positions:

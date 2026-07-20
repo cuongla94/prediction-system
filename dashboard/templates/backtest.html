@@ -75,6 +75,76 @@
     {% endif %}
 
     <div class="section-head" style="margin-top:8px">
+      <h4>Probability reliability (held-out backtest)</h4>
+      <span class="section-head-rule"></span>
+    </div>
+    <p class="section-note">
+      Does a "70% chance" bracket actually win about 70% of the time? This fits the model on the
+      older 70% of settled days and checks it on the held-out most-recent 30% it never saw, then pools
+      every city and metric together (any single thin market has too few days to judge a bucket on its
+      own). This is the calibration criterion the <a href="{{ url_for('paper_trading') }}">paper-trading
+      validation bar</a> refers to. Re-run with <code>uv run scripts/run_backtest.py</code>.
+    </p>
+    {% if not backtest_run or not reliability or not reliability.pooled %}
+    <p class="empty">run_backtest.py has never been run against this database.</p>
+    {% else %}
+    {% set normal = reliability.pooled.normal %}
+    {% set blended = reliability.pooled.blended_std %}
+    {% set student = reliability.pooled.student_t %}
+    <p class="section-note">
+      Pooled held-out Brier score (lower is better) across {{ reliability.eval_rows_total }} bracket-days:
+      <strong>fixed-std model = {{ "%.4f"|format(normal.brier) }}</strong> (this is what the live pipeline
+      uses), Student's t = {{ "%.4f"|format(student.brier) }}, spread-blended std =
+      {{ "%.4f"|format(blended.brier) }}.
+      {% if blended.brier < normal.brier %}
+      The spread-blended std beat the fixed std this run — worth considering promoting it to live
+      (see <code>weather/probability.py</code>'s heteroscedastic path, currently backtest-only).
+      {% else %}
+      The spread-blended std did not beat the fixed std this run, so the live pipeline correctly still
+      uses the fixed per-city std; the blended path stays backtest-only until it earns promotion.
+      {% endif %}
+    </p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Predicted probability</th>
+            <th style="text-align:right">Bracket-days</th>
+            <th style="text-align:right">Avg predicted</th>
+            <th style="text-align:right">Actually won</th>
+            <th style="text-align:right">Gap</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in normal.buckets %}
+          {% if b.n > 0 %}
+          {% set gap = (b.realized - b.predicted) if b.realized is not none else none %}
+          {% set well_populated_miss = b.realized is not none and b.n >= 20 and (gap if gap >= 0 else -gap) > 0.15 %}
+          <tr>
+            <td class="tnum">{{ b.label }}</td>
+            <td class="tnum" style="text-align:right">{{ b.n }}</td>
+            <td class="tnum" style="text-align:right">{{ "%.0f%%"|format(b.predicted * 100) }}</td>
+            <td class="tnum" style="text-align:right">{{ "%.0f%%"|format(b.realized * 100) if b.realized is not none else '—' }}</td>
+            <td class="tnum {{ 'pnl-negative' if well_populated_miss else '' }}" style="text-align:right">
+              {{ "%+.0f pp"|format(gap * 100) if gap is not none else '—' }}{% if well_populated_miss %} ⚠{% endif %}
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="section-note">
+      Buckets for the live (fixed-std) model. "Gap" is actually-won minus predicted — negative means
+      the model was overconfident (the bracket won less often than it claimed). A gap flagged ⚠ is one
+      that both has 20+ settled bracket-days behind it and misses by more than 15 points: that's a real
+      miscalibration to re-fit on, not small-sample noise. Watch the high-confidence rows especially —
+      overconfidence at 90–100% is the exact failure mode behind a string of "sure thing" losses.
+      Last run {{ backtest_run.started_at|pacific }}.
+    </p>
+    {% endif %}
+
+    <div class="section-head" style="margin-top:8px">
       <h4>Independent settlement check (NOAA CDO)</h4>
       <span class="section-head-rule"></span>
     </div>

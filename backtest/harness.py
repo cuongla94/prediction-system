@@ -258,6 +258,75 @@ def collect_residuals(rows: list[BacktestRow]) -> list[float]:
     return [residual for _, residual in collect_dated_residuals(rows)]
 
 
+def collect_dated_residuals_with_spread(rows: list[BacktestRow]) -> list[tuple[str, float, float]]:
+    """collect_dated_residuals plus each day's cross-model forecast_spread —
+    (date, actual - forecast_mean, forecast_spread), one per day. For fitting a
+    heteroscedastic scale (fit_spread_scale): the residual is the realized
+    error to explain, the spread is the candidate day-specific predictor of how
+    big that error tends to be. Same per-day dedup and tail-bracket exclusion
+    as collect_dated_residuals (see there) — forecast_spread is identical
+    across a day's brackets, so the first one kept per date carries it."""
+    seen_dates: set[str] = set()
+    result: list[tuple[str, float, float]] = []
+    for row in rows:
+        if row.approx_actual_temp is None or row.target_date in seen_dates:
+            continue
+        seen_dates.add(row.target_date)
+        result.append((row.target_date, row.approx_actual_temp - row.forecast_mean, row.forecast_spread))
+    return result
+
+
+# = weather.probability._MIN_STD ** 2. Kept as a local literal rather than
+# importing a private name across the module boundary; the two must stay in
+# step, so this comment names the tie explicitly.
+_MIN_BASELINE_VAR = 0.25
+
+
+def fit_spread_scale(rows: list[BacktestRow]) -> tuple[float, float]:
+    """Fit realized-error variance as baseline_var + spread_coef * spread^2,
+    by OLS of the (bias-centered) squared residual on the squared cross-model
+    spread across days. Returns (baseline_var, spread_coef) for
+    weather.probability.heteroscedastic_scale.
+
+    The question this answers empirically, not by assumption: does the live
+    ensemble's own model-to-model disagreement on a given day actually predict
+    a bigger forecast error that day? If it does, spread_coef comes out
+    positive and a high-disagreement day gets a wider, less confident
+    distribution than a low-disagreement one — which the current fixed per-city
+    std can't do. If it doesn't (a flat or negative slope), spread_coef clamps
+    to 0.0 and this degrades to a constant baseline std: the honest
+    "disagreement doesn't help, keep the fixed std" answer, not a forced
+    improvement — the same self-rejecting spirit as the Student's t comparison.
+
+    Residuals are centered on their own mean bias before squaring, so
+    baseline_var is a variance around the corrected mean (comparable to
+    fit_empirical_normal's std**2), not a raw second moment that would fold the
+    bias back in. baseline_var is floored at _MIN_BASELINE_VAR so a steep slope
+    can't drive the intercept to a degenerate or negative variance.
+    """
+    data = collect_dated_residuals_with_spread(rows)
+    if len(data) < 3:
+        raise ValueError(f"Need at least 3 usable days to fit a spread scale, got {len(data)}.")
+    residuals = [residual for _, residual, _ in data]
+    mean_bias = sum(residuals) / len(residuals)
+    xs = [spread**2 for _, _, spread in data]
+    ys = [(residual - mean_bias) ** 2 for _, residual, _ in data]
+
+    n = len(xs)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    denom = sum((x - mean_x) ** 2 for x in xs)
+    if denom == 0:
+        # Every day's models disagreed equally — no spread variation for the
+        # regression to use, so there's nothing spread can explain; fall back
+        # to the pooled variance as a flat baseline.
+        return max(mean_y, _MIN_BASELINE_VAR), 0.0
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denom
+    spread_coef = max(0.0, slope)
+    baseline_var = mean_y - spread_coef * mean_x
+    return max(baseline_var, _MIN_BASELINE_VAR), spread_coef
+
+
 def fit_monthly_bias(rows: list[BacktestRow], min_samples: int = 10) -> dict[int, float]:
     """Mean residual bias per calendar month (1-12), not one flat number.
 

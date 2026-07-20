@@ -16,8 +16,12 @@
   <td class="ladder-bracket tnum">{{ alert.bracket_label }}</td>
   <td class="ladder-pick">
     <span class="side-badge">{{ alert.side }}</span>
-    <span class="pick-edge tnum">{{ "%+.1f%%"|format(alert.edge * 100) }} edge</span>
+    <span class="pick-edge tnum">{{ "%+.1f%%"|format(alert.display_edge * 100) }} edge</span>
     <span class="win-probability tnum">{{ "%.0f%%"|format(alert.win_probability * 100) }} win chance</span>
+    {% set fit_days = calibration_fit_days(alert) %}
+    {% if fit_days is not none and fit_days < THIN_SAMPLE_DAYS %}
+    <span class="thin-sample tnum" title="This city and metric's model is calibrated on only {{ fit_days }} settled days — the most-established markets have 420+. Treat its confidence, especially a high win chance, as more provisional.">Thin history · {{ fit_days }}d</span>
+    {% endif %}
   </td>
   <td class="ladder-actions">
     <button type="button" class="btn btn-secondary"
@@ -42,6 +46,10 @@
         {{ stat("Market", "%.1f%%"|format(alert.market_yes_price * 100), "What traders on Kalshi think will happen, guessed from the price they're paying. If \"Yes\" costs 40 cents, traders think there's about a 40% chance it happens.") }}
         {{ stat("Edge", "%+.1f%%"|format(alert.edge * 100), "How much our guess and the market's guess don't match. A bigger number means we disagree with the market more — that's what makes this worth a second look.", "edge") }}
         {{ stat("Threshold", "%.1f%%"|format(alert.fee_adjusted_threshold * 100), "The smallest disagreement worth caring about. Every trade costs a small fee, so if our edge is smaller than this line, it's not worth paying the fee for.") }}
+        {% set fit_days = calibration_fit_days(alert) %}
+        {% if fit_days is not none %}
+        {{ stat("History", "%d days"|format(fit_days), "How many past settled days this city and metric's model was calibrated on. More is better: the original 6 High Temperature cities have 420+, while newer cities and every Low Temperature market have far fewer (often under 150), which makes their probabilities more provisional — the same number backed by less evidence.", "pnl-negative" if fit_days < THIN_SAMPLE_DAYS else "") }}
+        {% endif %}
       </dl>
 
       <p class="stake-callout">

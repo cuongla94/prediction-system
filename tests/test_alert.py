@@ -52,3 +52,25 @@ def test_win_probability_for_flat_side_is_model_probability():
     alert = _alert(model_probability=0.30, market_yes_price=0.30, edge=0.0)
     assert alert.side == "FLAT"
     assert alert.win_probability == pytest.approx(0.30)
+
+
+def test_display_edge_for_yes_side_matches_raw_edge():
+    # YES pick: the trade's own edge is just the raw (YES-referenced) edge.
+    alert = _alert(model_probability=0.40, market_yes_price=0.25, edge=0.15)
+    assert alert.side == "YES"
+    assert alert.display_edge == pytest.approx(0.15)
+
+
+def test_display_edge_for_no_side_flips_sign_to_the_traded_side():
+    # NO pick: raw edge is -0.20 (the YES side's edge), but the NO trade's own
+    # edge is +0.20 — the number that reads coherently next to a 90% win chance.
+    alert = _alert(model_probability=0.10, market_yes_price=0.30, edge=-0.20)
+    assert alert.side == "NO"
+    assert alert.win_probability == pytest.approx(0.90)
+    assert alert.display_edge == pytest.approx(0.20)
+
+
+def test_display_edge_for_flat_side_is_zero():
+    alert = _alert(model_probability=0.30, market_yes_price=0.30, edge=0.0)
+    assert alert.side == "FLAT"
+    assert alert.display_edge == pytest.approx(0.0)
