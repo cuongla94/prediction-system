@@ -75,6 +75,18 @@ alter table alerts add column if not exists metric text not null default 'max';
 -- the station-local date the pipeline actually reasoned in).
 alter table alerts add column if not exists lead_days integer;
 
+-- Added 2026-07-20: the station's already-recorded extreme for the target day
+-- at the moment this row was priced (weather/nws_observations.py), or null
+-- when there was nothing to condition on (lead_days > 0, or the observations
+-- fetch failed). Stored rather than re-derived because it is *not*
+-- reconstructable after the fact — it's a point-in-time reading, and by
+-- tomorrow the same query returns the finished day's extreme instead of what
+-- was known at pricing time. Without it there's no way to audit whether
+-- model_probability was conditioned correctly, which is precisely the check
+-- that was missing when the no-edge failure went undetected (see
+-- kalshi-no-edge-root-cause memory).
+alter table alerts add column if not exists observed_so_far double precision;
+
 -- Added 2026-07-18 for the dashboard's /status page (monitoring/run_tracker.py)
 -- — answers "is our system running well, any errors" from real execution
 -- history rather than just inferring it from alerts.created_at freshness.

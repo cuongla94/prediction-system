@@ -336,13 +336,37 @@ class PipelineRun:
     detail: str | None
 
 
-# The 3 scripts scheduler/run_pipeline.sh runs — used to show "never run" for
-# a script with zero rows, not just omit it silently.
+# The scripts scheduler/{run_pipeline,run_settlement_cycle}.sh run — used to
+# show "never run" for a script with zero rows, not just omit it silently.
 _KNOWN_SCRIPTS = ["generate_alerts", "mark_settled_alerts", "run_paper_trading", "send_notifications"]
-# scheduler/crontab.example runs the pipeline ~every 6h — flagged stale a
-# couple hours past that, not immediately, to leave room for a run simply
-# taking a while or a device being asleep, not just "did it fire on the dot."
-_STALE_AFTER = timedelta(hours=8)
+# Two different cadences, not one — added 2026-07-20 after a real gap this
+# single flat threshold hid: generate_alerts/send_notifications still run via
+# run_pipeline.sh's ~6h cadence, but mark_settled_alerts/run_paper_trading
+# moved to run_settlement_cycle.sh's 15-minute cadence the same day (see that
+# script's docstring). A flat 8h threshold couldn't tell "the settlement cron
+# stopped firing an hour ago" from "totally normal" — which is exactly what
+# happened: the new cron entry didn't actually start firing on schedule until
+# hours after it was believed deployed, and nothing here would have caught
+# that short of manually diffing pipeline_runs timestamps. 30 minutes is 2x
+# the 15-min cadence, the same "a couple cycles of buffer, not zero" margin
+# the 8h/~6h ratio already used for the slower pair.
+_STALE_AFTER: dict[str, timedelta] = {
+    "generate_alerts": timedelta(hours=8),
+    "send_notifications": timedelta(hours=8),
+    "mark_settled_alerts": timedelta(minutes=30),
+    "run_paper_trading": timedelta(minutes=30),
+}
+_DEFAULT_STALE_AFTER = timedelta(hours=8)
+# The cadence each script is actually scheduled at (scheduler/*.sh) — distinct
+# from _STALE_AFTER, which is that cadence plus buffer. Shown on /status so
+# "expected every 15m" and "stale after 30m" read as the two different
+# numbers they are, not one value doing double duty.
+_CADENCE = {
+    "generate_alerts": "~6h",
+    "send_notifications": "~6h",
+    "mark_settled_alerts": "15m",
+    "run_paper_trading": "15m",
+}
 
 
 def _pipeline_status() -> tuple[dict[str, PipelineRun], list[PipelineRun], str | None]:
@@ -378,9 +402,14 @@ def status():
     latest, history, db_error = _pipeline_status()
     now = datetime.now(UTC)
     stale = {
-        script: (now - (run.finished_at or run.started_at)) > _STALE_AFTER
+        script: (now - (run.finished_at or run.started_at)) > _STALE_AFTER.get(script, _DEFAULT_STALE_AFTER)
         for script, run in latest.items()
     }
+
+    def _label(delta: timedelta) -> str:
+        minutes = int(delta.total_seconds() // 60)
+        return f"{minutes}m" if minutes < 60 else f"{minutes // 60}h"
+
     return render_template(
         "status.html",
         known_scripts=_KNOWN_SCRIPTS,
@@ -388,7 +417,8 @@ def status():
         history=history,
         db_error=db_error,
         stale=stale,
-        stale_after_hours=int(_STALE_AFTER.total_seconds() // 3600),
+        stale_after={script: _label(_STALE_AFTER.get(script, _DEFAULT_STALE_AFTER)) for script in _KNOWN_SCRIPTS},
+        cadence=_CADENCE,
     )
 
 

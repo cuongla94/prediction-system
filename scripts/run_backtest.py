@@ -32,7 +32,7 @@ from datetime import date, timedelta
 
 from dotenv import load_dotenv
 
-from backtest.calibration import brier_score, bucket_calibration
+from backtest.calibration import MarketBenchmark, brier_score, bucket_calibration, market_benchmark
 from backtest.cache import cached_collect_rows
 from backtest.harness import BacktestRow, fit_empirical_normal, fit_spread_scale, fit_student_t, split_by_date
 from kalshi_client import KalshiClient
@@ -103,6 +103,10 @@ def evaluate_city(series_ticker: str, rows: list[BacktestRow]) -> dict:
         "series_ticker": series_ticker,
         "eval_days": len({r.target_date for r in eval_rows}),
         "eval_rows": len(eval_rows),
+        # Kalshi's own price on each eval row, for the market benchmark in
+        # build_backtest_detail. Kept aligned index-for-index with
+        # predictions/outcomes above; None where no price was recorded.
+        "market_prices": [row.last_price for row in eval_rows],
         "fit": {
             # t_df/t_scale come from scipy as numpy scalars — cast to plain
             # float so the persisted JSON holds native numbers, not np.float64
@@ -145,8 +149,18 @@ def build_backtest_detail(evaluations: list[dict], *, start_date: str, end_date:
     per_city = []
     pooled_predictions: dict[str, list[float]] = {key: [] for key in variant_keys}
     pooled_outcomes: list[bool] = []
+    pooled_market_prices: list[float | None] = []
 
     for ev in evaluations:
+        # An evaluation without market prices scores as untested rather than
+        # erroring — market_benchmark returns None for it, and _tradeable_
+        # verdict treats "couldn't test" as a non-pass, which is the whole
+        # point of the gate.
+        market_prices = ev.get("market_prices") or [None] * len(ev["outcomes"])
+        city_benchmarks = {
+            key: market_benchmark(ev["predictions"][key], market_prices, ev["outcomes"])
+            for key in variant_keys
+        }
         per_city.append(
             {
                 "city": ev["city"],
@@ -155,11 +169,13 @@ def build_backtest_detail(evaluations: list[dict], *, start_date: str, end_date:
                 "eval_rows": ev["eval_rows"],
                 "fit": ev["fit"],
                 "brier": {key: round(brier_score(ev["predictions"][key], ev["outcomes"]), 4) for key in variant_keys},
+                "vs_market": {key: _benchmark_dict(bench) for key, bench in city_benchmarks.items()},
             }
         )
         for key in variant_keys:
             pooled_predictions[key].extend(ev["predictions"][key])
         pooled_outcomes.extend(ev["outcomes"])
+        pooled_market_prices.extend(market_prices)
 
     pooled = {}
     if pooled_outcomes:
@@ -167,6 +183,9 @@ def build_backtest_detail(evaluations: list[dict], *, start_date: str, end_date:
             pooled[key] = {
                 "brier": round(brier_score(pooled_predictions[key], pooled_outcomes), 4),
                 "buckets": _bucket_dicts(pooled_predictions[key], pooled_outcomes),
+                "vs_market": _benchmark_dict(
+                    market_benchmark(pooled_predictions[key], pooled_market_prices, pooled_outcomes)
+                ),
             }
 
     return {
@@ -176,6 +195,67 @@ def build_backtest_detail(evaluations: list[dict], *, start_date: str, end_date:
         "eval_rows_total": len(pooled_outcomes),
         "per_city": per_city,
         "pooled": pooled,
+        "tradeable": _tradeable_verdict(pooled, variant_keys),
+    }
+
+
+def _benchmark_dict(bench: MarketBenchmark | None) -> dict | None:
+    if bench is None:
+        return None
+    return {
+        "n": bench.n,
+        "brier_model": round(bench.brier_model, 4),
+        "brier_market": round(bench.brier_market, 4),
+        "skill_score": round(bench.skill_score, 4),
+        "beats_market": bench.beats_market,
+    }
+
+
+def _tradeable_verdict(pooled: dict, variant_keys: list[str]) -> dict:
+    """The gate: is ANY variant good enough to justify risking capital?
+
+    Deliberately separate from "which variant has the best Brier" — that
+    question is only about which model is least wrong, and it has an answer
+    even when every option is worthless to trade. This one asks whether the
+    best variant beats the price it would be trading against, which is the
+    thing that actually decides profitability, and which nothing in this
+    script asked before 2026-07-20.
+
+    A missing benchmark (no market prices on the eval rows) is reported as
+    untested and does NOT pass — "couldn't check" must never read as "fine."
+    """
+    tested = {
+        key: pooled[key]["vs_market"]
+        for key in variant_keys
+        if key in pooled and pooled[key].get("vs_market") is not None
+    }
+    if not tested:
+        return {
+            "verdict": "UNTESTED",
+            "passes": False,
+            "reason": "No market prices on the evaluation rows — the model was never compared against the price it would trade against.",
+        }
+
+    best_key = max(tested, key=lambda key: tested[key]["skill_score"])
+    best = tested[best_key]
+    passes = bool(best["beats_market"])
+    return {
+        "verdict": "TRADEABLE" if passes else "NO EDGE",
+        "passes": passes,
+        "best_variant": best_key,
+        "skill_score": best["skill_score"],
+        "brier_model": best["brier_model"],
+        "brier_market": best["brier_market"],
+        "n": best["n"],
+        "reason": (
+            f"{best_key} beats the market on {best['n']} held-out rows "
+            f"(Brier {best['brier_model']} vs {best['brier_market']})."
+            if passes
+            else f"No variant beats the market. Best was {best_key}: Brier {best['brier_model']} "
+            f"vs market's {best['brier_market']} on {best['n']} held-out rows "
+            f"(skill {best['skill_score']:+.4f}). A calibrated model that only reproduces the "
+            f"price is not tradeable — it loses at the rate of the fees."
+        ),
     }
 
 
@@ -208,13 +288,34 @@ def main() -> None:
 
         detail = build_backtest_detail(evaluations, start_date=START_DATE, end_date=END_DATE)
         pooled = detail["pooled"]
+        tradeable = detail["tradeable"]
         run.summary = (
             f"Backtested {len(evaluations)} series ({detail['eval_rows_total']} held-out rows). "
             f"Pooled Brier: normal={pooled['normal']['brier']}, "
-            f"student_t={pooled['student_t']['brier']}, blended_std={pooled['blended_std']['brier']}"
+            f"student_t={pooled['student_t']['brier']}, blended_std={pooled['blended_std']['brier']}. "
+            f"Vs market: {tradeable['verdict']}"
         )
         run.detail = json.dumps(detail)
         print(f"\n{run.summary}")
+
+        print("\n=== MARKET BENCHMARK (the gate that decides tradeability) ===")
+        for key in detail["variants"]:
+            bench = pooled.get(key, {}).get("vs_market")
+            if bench is None:
+                print(f"  {key:>12}: no market prices on eval rows — untested")
+                continue
+            print(
+                f"  {key:>12}: model Brier {bench['brier_model']:.4f} vs market {bench['brier_market']:.4f} "
+                f"(skill {bench['skill_score']:+.4f}, n={bench['n']})"
+            )
+        print(f"\n  VERDICT: {tradeable['verdict']} — {tradeable['reason']}")
+
+        # A backtest that runs clean but produces an untradeable model is not a
+        # success: reporting it as one is what let this go unnoticed for 76
+        # losing trades. The run itself didn't error, so this isn't "failed"
+        # either — 'partial' is the honest status, and it's what /status shows.
+        if not tradeable["passes"]:
+            run.status = "partial"
 
 
 if __name__ == "__main__":

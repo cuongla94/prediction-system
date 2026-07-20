@@ -115,6 +115,111 @@ def heteroscedastic_bracket_probability(
     return bracket_probability(loc, scale, floor_strike, cap_strike)
 
 
+def observation_conditioned_bracket_probability(
+    loc: float,
+    scale: float,
+    floor_strike: float | None,
+    cap_strike: float | None,
+    metric: str,
+    observed_so_far: float,
+    *,
+    remaining_scale_fraction: float = 1.0,
+) -> float:
+    """P(bracket resolves YES) given `observed_so_far` — the extreme this
+    station has *already recorded* today (weather/nws_observations.py).
+
+    This is the fix for the failure diagnosed 2026-07-20 (see the
+    kalshi-no-edge-root-cause memory): every other function in this module
+    prices a bracket off an unconditional full-day-ahead forecast, which is
+    simply the wrong distribution once part of the day has happened. A daily
+    *high* cannot come in below a temperature the station has already hit —
+    that is arithmetic, not a modelling opinion — yet the unconditional model
+    was assigning an average 34.5% to brackets already ruled out this way, and
+    went 0-for-171 on them live while the market priced them at ~1c.
+
+    The model: the final extreme is `max(observed_so_far, M)` for a "max"
+    metric (`min(...)` for "min"), where `M ~ Normal(loc, scale)` is the
+    extreme over the rest of the day. That yields a point mass at
+    `observed_so_far` — the genuinely large probability that today's extreme
+    has already happened — rather than smearing that mass across brackets the
+    day has already excluded. Boundary/rounding convention is bracket_
+    probability's, unchanged.
+
+    `remaining_scale_fraction` (0-1] multiplies `scale` to reflect that less
+    of the day left means less room left to move. Left at 1.0 it applies no
+    shrinkage at all, which is deliberately the conservative default: the
+    truncation above is correct by construction and needs no validation, but
+    *how fast* forecast uncertainty should decay through the day is a real
+    modelling choice, and this project's standard (see module docstring, and
+    the Student's-t alternative that was tested and rejected) is that such a
+    choice earns its way in through backtest.harness, not by assertion. Fit it
+    before passing anything else.
+    """
+    if metric not in ("min", "max"):
+        raise ValueError(f"metric must be 'min' or 'max', got {metric!r}")
+    if not 0 < remaining_scale_fraction <= 1:
+        raise ValueError(f"remaining_scale_fraction must be in (0, 1], got {remaining_scale_fraction}")
+
+    dist = stats.norm(loc=loc, scale=max(scale * remaining_scale_fraction, _MIN_STD))
+
+    # The bracket's continuous bounds under the same half-degree correction
+    # bracket_probability applies, with an unbounded side left as +/-inf.
+    if floor_strike is None and cap_strike is not None:
+        low, high = float("-inf"), cap_strike - 0.5
+    elif cap_strike is None and floor_strike is not None:
+        low, high = floor_strike + 0.5, float("inf")
+    elif floor_strike is not None and cap_strike is not None:
+        low, high = floor_strike - 0.5, cap_strike + 0.5
+    else:
+        raise ValueError("Market has neither floor_strike nor cap_strike set — can't bound a bracket.")
+
+    in_bracket = low <= observed_so_far <= high
+    if metric == "max":
+        # Final = max(observed, M): mass below `observed` collapses onto it.
+        continuous = dist.cdf(high) - dist.cdf(max(low, observed_so_far))
+        atom = dist.cdf(observed_so_far) if in_bracket else 0.0
+    else:
+        # Final = min(observed, M): mass above `observed` collapses onto it.
+        continuous = dist.cdf(min(high, observed_so_far)) - dist.cdf(low)
+        atom = dist.sf(observed_so_far) if in_bracket else 0.0
+
+    return float(min(max(max(continuous, 0.0) + atom, 0.0), 1.0))
+
+
+def calibrated_observation_conditioned_probability(
+    series_ticker: str,
+    ensemble_mean: float,
+    floor_strike: float | None,
+    cap_strike: float | None,
+    target_month: int,
+    metric: str,
+    observed_so_far: float | None,
+    *,
+    remaining_scale_fraction: float = 1.0,
+) -> float:
+    """calibrated_bracket_probability, conditioned on today's already-recorded
+    extreme when there is one.
+
+    `observed_so_far=None` (no observation available, or the target date isn't
+    today) falls back to the unconditional calibrated path, so this is safe to
+    call for every market regardless of lead time — a market settling tomorrow
+    genuinely has nothing observed yet, and gets exactly the old behavior.
+    """
+    params = get_calibration(series_ticker)
+    loc = ensemble_mean + params.bias_for_month(target_month)
+    if observed_so_far is None:
+        return bracket_probability(loc, params.std, floor_strike, cap_strike)
+    return observation_conditioned_bracket_probability(
+        loc,
+        params.std,
+        floor_strike,
+        cap_strike,
+        metric,
+        observed_so_far,
+        remaining_scale_fraction=remaining_scale_fraction,
+    )
+
+
 def temperature_in_bracket(actual_temp: float, floor_strike: float | None, cap_strike: float | None) -> bool:
     """Whether an already-whole-degree actual reading falls inside this
     bracket — the boolean counterpart to bracket_probability's boundary

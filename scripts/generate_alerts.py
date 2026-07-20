@@ -37,8 +37,13 @@ from edge.calculator import bracket_sum_deviation, compute_edge
 from kalshi_client import KalshiClient, market_url, parse_event_date
 from monitoring import track_run
 from weather.calibration_params import get_calibration
+from weather.nws_observations import fetch_today_extreme
 from weather.open_meteo import fetch_daily_ensemble
-from weather.probability import calibrated_probability_for_market, check_boundary_language, fit_normal
+from weather.probability import (
+    calibrated_observation_conditioned_probability,
+    check_boundary_language,
+    fit_normal,
+)
 from weather.stations import STATIONS
 
 
@@ -85,6 +90,30 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
     # station itself is on.
     local_today = datetime.now(UTC).astimezone(ZoneInfo(station.standard_time_timezone)).date()
 
+    # Today's already-recorded extreme at the very station Kalshi settles
+    # against. This is the single input whose absence caused the 2026-07-20
+    # no-edge finding (kalshi-no-edge-root-cause memory): a same-day market is
+    # priced by traders who can see the thermometer, while this pipeline was
+    # pricing it off a morning forecast as though the day hadn't happened,
+    # which is where the phantom "edge" came from. Only meaningful for a
+    # lead_days=0 event — a market settling tomorrow has nothing observed yet.
+    #
+    # A failure here must not take the city's whole run down: falling back to
+    # None just restores the previous (unconditional) behavior for this cycle,
+    # which is worse but not broken.
+    observed_so_far: float | None = None
+    if any(event_date == local_today for event_date, _ in dated_events):
+        try:
+            observation = fetch_today_extreme(
+                station.nws_station_id, station.metric, station.standard_time_timezone
+            )
+        except Exception as exc:  # noqa: BLE001 - network/shape errors are all non-fatal here
+            print(f"  WARNING: {station.city}: today's observations unavailable ({exc}) — pricing unconditionally.")
+        else:
+            if observation is not None:
+                observed_so_far, observed_at = observation
+                print(f"{station.city}: observed {station.metric} so far today {observed_so_far:.1f}F (at {observed_at})")
+
     ensemble = fetch_daily_ensemble(
         station.latitude,
         station.longitude,
@@ -116,14 +145,17 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
                 print(f"  WARNING: {market.ticker}: {exc} — skipping this bracket.")
                 continue
 
-            model_probability = calibrated_probability_for_market(
+            # Only today's event can have an observation to condition on;
+            # anything further out passes None and prices exactly as before.
+            bracket_observation = observed_so_far if lead_days == 0 else None
+            model_probability = calibrated_observation_conditioned_probability(
                 series_ticker,
-                market.rules_primary,
+                mean,
                 market.floor_strike,
                 market.cap_strike,
-                mean,
                 event_date.month,
-                validate_rules_text=False,
+                station.metric,
+                bracket_observation,
             )
             market_price = round((market.yes_bid_dollars + market.yes_ask_dollars) / 2, 4)
             market_prices.append(market_price)
@@ -141,7 +173,8 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
                     model_probability=model_probability,
                     ensemble_mean=mean,
                     ensemble_std=std,
-                    model_version="normal-v3-seasonal-bias",
+                    observed_so_far=bracket_observation,
+                    model_version="normal-v4-observation-conditioned",
                     calibration_validated=False,
                     market_yes_price=market_price,
                     edge=edge_result.edge,

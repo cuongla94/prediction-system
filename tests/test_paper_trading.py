@@ -17,6 +17,11 @@ from paper_trading.engine import (
 
 NOW = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
 
+# Sentinel so _alert() can tell "caller passed close_time=None on purpose"
+# apart from "caller didn't specify one" — the two mean different things now
+# that a missing close_time blocks entry.
+_UNSET = object()
+
 
 def _alert(
     ticker="T1",
@@ -26,8 +31,17 @@ def _alert(
     market_yes_price=0.30,
     edge=0.10,
     actionable=True,
-    close_time=None,
+    close_time=_UNSET,
 ):
+    # Default to a close_time comfortably in the future, matching the event
+    # date below: plan_new_positions skips anything already past close, and
+    # (like an unparseable event_ticker) treats a *missing* close_time as
+    # past-close, so a None default here would silently exclude every alert
+    # this helper builds. Every real alert row has a close_time — 0 nulls
+    # among open alerts in production as of 2026-07-20 — so a real one is
+    # the honest default; the None case is exercised explicitly below.
+    if close_time is _UNSET:
+        close_time = NOW + timedelta(days=7)
     return OpenAlert(
         market_ticker=ticker,
         # Real, parseable, safely-not-"today" date suffix, not just the bare
@@ -144,6 +158,8 @@ def test_same_day_market_allowed_when_explicitly_opted_in():
         market_yes_price=0.30,
         edge=0.10,
         is_actionable=True,
+        # Same-day but still hours from closing — the case the opt-in is for.
+        close_time=NOW + timedelta(hours=8),
     )
     positions = plan_new_positions(
         [alert], already_traded=set(), cash_available=100.0, exclude_same_day=False, now=NOW
@@ -166,7 +182,45 @@ def test_day_ahead_market_not_treated_as_same_day():
         market_yes_price=0.30,
         edge=0.10,
         is_actionable=True,
+        close_time=NOW + timedelta(days=1),
     )
+    positions = plan_new_positions([alert], already_traded=set(), cash_available=100.0, now=NOW)
+    assert len(positions) == 1
+
+
+def test_market_already_past_its_close_time_is_never_traded():
+    # The exact production failure of 2026-07-19: 20 positions opened into
+    # markets that had already closed (-$15.07). The event is dated
+    # *yesterday*, so the same-day filter passes it — "not today" — but the
+    # market closed hours ago and can't be traded at all.
+    alert = _alert(event="KXHIGHNY", close_time=NOW - timedelta(hours=6))
+    positions = plan_new_positions([alert], already_traded=set(), cash_available=100.0, now=NOW)
+    assert positions == []
+
+
+def test_past_close_beats_an_explicit_same_day_opt_in():
+    # exclude_same_day=False is a strategy choice a caller is allowed to make;
+    # trading a closed market is not, so it must not be reachable by opting
+    # out of the *other* filter.
+    alert = _alert(close_time=NOW - timedelta(minutes=1))
+    positions = plan_new_positions(
+        [alert], already_traded=set(), cash_available=100.0, now=NOW, exclude_same_day=False
+    )
+    assert positions == []
+
+
+def test_missing_close_time_is_treated_as_untradeable():
+    # Can't confirm the market is still open — same cautious bias as an
+    # unresolvable station in _is_same_day.
+    alert = _alert(close_time=None)
+    positions = plan_new_positions([alert], already_traded=set(), cash_available=100.0, now=NOW)
+    assert positions == []
+
+
+def test_market_closing_soon_is_still_tradeable():
+    # The guard is about *past* close, not "close to closing" — an open
+    # market with a minute left is still a real, tradeable market.
+    alert = _alert(close_time=NOW + timedelta(minutes=1))
     positions = plan_new_positions([alert], already_traded=set(), cash_available=100.0, now=NOW)
     assert len(positions) == 1
 
@@ -415,6 +469,7 @@ def test_day_exposure_cap_is_per_date_not_global():
         market_yes_price=0.30,
         edge=0.40,
         is_actionable=True,
+        close_time=NOW + timedelta(days=8),
     )
     positions = plan_new_positions(
         [a, b], already_traded=set(), cash_available=100.0, max_correlated_exposure=5.0, now=NOW

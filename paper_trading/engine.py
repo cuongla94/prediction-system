@@ -232,6 +232,29 @@ def _is_same_day(alert: OpenAlert, *, now: datetime) -> bool:
     return event_date == local_today
 
 
+def _is_past_close(alert: OpenAlert, *, now: datetime) -> bool:
+    """True if this market's own close_time has already passed — i.e. it can't
+    be traded at all any more.
+
+    Not redundant with `_is_same_day`, which is what let 20 real trades open
+    into already-closed markets on 2026-07-19 (-$15.07). That filter only asks
+    "is this event *today*"; an event dated *yesterday* is not today, so it
+    passed. Stale rows are exactly what `_fetch_open_alerts` returns whenever
+    settlement lags: it selects on `settled_at is null`, so while the
+    settlement checker was broken, every unsettled past-day bracket kept
+    looking live and tradeable. This closes that off at the only fact that
+    actually decides it — Kalshi's own close_time — rather than by reasoning
+    about dates and timezones.
+
+    A missing close_time is treated as past-close (untradeable), matching
+    `_is_same_day`'s bias toward caution when it can't confirm otherwise:
+    can't verify the market is still open, don't spend money on it.
+    """
+    if alert.close_time is None:
+        return True
+    return alert.close_time <= now
+
+
 def deployable_cash(cash_available: float, total_bankroll: float, *, reserve_fraction: float | None = None) -> float:
     """How much of `cash_available` the bot may actually spend on new
     positions this cycle — `cash_available` minus a reserve floor pinned to
@@ -354,6 +377,10 @@ def plan_new_positions(
     market's price already reflects information a morning forecast doesn't
     have).
 
+    Unconditionally — not gated on any setting — anything already past its
+    own `close_time` is skipped (`_is_past_close`): that isn't a strategy
+    filter but a correctness one, since such a market can't be traded at all.
+
     Processes event-by-event, since sizing/kelly.py's event cap only makes
     sense computed across one event's brackets together — but events
     themselves are visited strongest-signal-first (by each event's best
@@ -400,6 +427,8 @@ def plan_new_positions(
         if alert.market_ticker in already_traded or not alert.is_actionable:
             continue
         if abs(alert.edge) < min_edge_val:
+            continue
+        if _is_past_close(alert, now=now_val):
             continue
         if exclude_same_day_val and _is_same_day(alert, now=now_val):
             continue

@@ -56,7 +56,28 @@
     </div>
 
     <section class="validation-bar">
-      <h2>Validation bar</h2>
+      <h2>Validation bar &mdash; <span class="validation-verdict-failed">FAILED 2026-07-20</span></h2>
+      <div class="banner banner-warning" style="margin: 0 0 16px">
+        <strong>This strategy has no edge. Do not put real capital behind it.</strong>
+        Measured against live settlements on 462 distinct settled markets (77 events, 20 cities):
+        the model&rsquo;s Brier score is <strong>0.1224</strong> against the market&rsquo;s
+        <strong>0.0048</strong> &mdash; the market is ~25&times; more accurate, and beats the model in
+        19 of 20 cities. Across the 171 markets where the model claimed more than 10 points of edge,
+        <strong>0 resolved in its favour</strong>. The &ldquo;edge&rdquo; was measuring the model&rsquo;s
+        own staleness, not mispricing: bracket probabilities ignored the temperature already recorded
+        that day, while the market could see it.
+        <br /><br />
+        The criteria below were never reached &mdash; they are a sample-size bar, and this is a
+        structural failure that more samples cannot fix. Tightening the edge threshold makes it
+        <em>worse</em>, because a larger claimed edge selects for a larger model error. Per the
+        pre-committed rule below: back to the forecasting core, not more automation and not real money.
+        The root cause is fixed in <code>weather/probability.py</code>
+        (<code>observation_conditioned_bracket_probability</code>, live as
+        <code>normal-v4-observation-conditioned</code>); this bar stays FAILED until
+        <code>scripts/run_backtest.py</code> reports <strong>TRADEABLE</strong> &mdash; i.e. the model
+        actually beats the market out-of-sample &mdash; and a fresh batch of paper trades then clears
+        the sample-size criteria below on top of that.
+      </div>
       <p class="section-note">
         Set 2026-07-19, before knowing how this goes — the whole point of writing it down now is to
         judge results against a bar fixed in advance, not against whichever number looks good this

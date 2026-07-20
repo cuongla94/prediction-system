@@ -17,11 +17,12 @@
     <p class="page-subtitle" style="max-width:760px">Real execution history from generate_alerts / mark_settled_alerts / send_notifications — not inferred from data freshness alone.</p>
 
     <div class="banner" style="margin:0 0 22px">
-      Runs on a cron schedule (10pm, 4am, 10am, 4pm Pacific — 0 5,11,17,23 UTC on the server) on the
-      production droplet as of 2026-07-18 — a run below with a round-hour timestamp near one of those
-      slots is the real unattended pipeline; one off-the-hour is most likely a manual/local invocation.
-      The "stale after {{ stale_after_hours }}h"
-      flag means something now that a real cadence exists — a genuine gap here is worth investigating.
+      Two cadences, not one, as of 2026-07-20 — generate_alerts/send_notifications still run on
+      scheduler/run_pipeline.sh's cron (10pm, 4am, 10am, 4pm Pacific — 0 5,11,17,23 UTC), while
+      mark_settled_alerts/run_paper_trading moved to scheduler/run_settlement_cycle.sh's tighter
+      15-minute cron so a settled market doesn't sit unrecognized for up to 6h. Each card's
+      "stale after" threshold below matches its own cadence — a genuine gap past that is worth
+      investigating; it isn't just "did it fire on the dot."
     </div>
 
     {% if db_error %}
@@ -40,11 +41,12 @@
         {% else %}
         <div style="display:flex;align-items:center;gap:8px">
           <span style="width:8px;height:8px;border-radius:50%;background:{{ dot }};flex:none"></span>
-          <span style="font-weight:600;font-size:14px">{{ run.status|capitalize }}{% if stale.get(script) %} · <span class="status-stale">stale</span>{% endif %}</span>
+          <span style="font-weight:600;font-size:14px">{{ run.status|capitalize }}{% if stale.get(script) %} · <span class="status-stale">stale (past {{ stale_after.get(script) }})</span>{% endif %}</span>
         </div>
         <p class="stat-sub" style="margin:0">{{ run.summary or '—' }}</p>
         {% if run.detail %}<p class="stat-card-detail">{{ run.detail }}</p>{% endif %}
         <p class="stat-card-time tnum" style="margin:0">Started {{ run.started_at|pacific }}</p>
+        <p class="stat-card-time tnum" style="margin:0;opacity:0.7">Expected every {{ cadence.get(script) }}</p>
         {% endif %}
       </div>
       {% endfor %}

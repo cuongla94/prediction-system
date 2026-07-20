@@ -96,3 +96,64 @@ def test_build_backtest_detail_handles_no_evaluations():
     assert detail["per_city"] == []
     assert detail["pooled"] == {}
     assert detail["eval_rows_total"] == 0
+
+
+# --- tradeability gate (added 2026-07-20) ---
+
+
+def _evaluation(predictions: list[float], market_prices, outcomes: list[bool]) -> dict:
+    """A minimal evaluate_city-shaped dict, enough for build_backtest_detail."""
+    return {
+        "city": "NYC",
+        "series_ticker": "KXHIGHNY",
+        "eval_days": len(outcomes),
+        "eval_rows": len(outcomes),
+        "fit": {},
+        "predictions": {key: list(predictions) for key in ("normal", "student_t", "blended_std")},
+        "outcomes": list(outcomes),
+        "market_prices": market_prices,
+    }
+
+
+def test_gate_reports_no_edge_when_the_model_only_matches_the_market():
+    detail = build_backtest_detail(
+        [_evaluation([0.2, 0.8, 0.5], [0.2, 0.8, 0.5], [False, True, True])],
+        start_date="2026-01-01",
+        end_date="2026-07-01",
+    )
+    assert detail["tradeable"]["verdict"] == "NO EDGE"
+    assert detail["tradeable"]["passes"] is False
+
+
+def test_gate_passes_only_when_the_model_beats_the_market():
+    detail = build_backtest_detail(
+        [_evaluation([0.05, 0.95, 0.05], [0.4, 0.6, 0.4], [False, True, False])],
+        start_date="2026-01-01",
+        end_date="2026-07-01",
+    )
+    assert detail["tradeable"]["verdict"] == "TRADEABLE"
+    assert detail["tradeable"]["passes"] is True
+    assert detail["tradeable"]["skill_score"] > 0
+
+
+def test_gate_reports_untested_rather_than_passing_without_market_prices():
+    # The critical property: a backtest that *couldn't* run the comparison
+    # must never read as a pass. This is the shape every pre-2026-07-20 run had.
+    detail = build_backtest_detail(
+        [_evaluation([0.2, 0.8], None, [False, True])],
+        start_date="2026-01-01",
+        end_date="2026-07-01",
+    )
+    assert detail["tradeable"]["verdict"] == "UNTESTED"
+    assert detail["tradeable"]["passes"] is False
+
+
+def test_per_city_detail_carries_the_market_comparison():
+    detail = build_backtest_detail(
+        [_evaluation([0.2, 0.8, 0.5], [0.2, 0.8, 0.5], [False, True, True])],
+        start_date="2026-01-01",
+        end_date="2026-07-01",
+    )
+    vs_market = detail["per_city"][0]["vs_market"]["normal"]
+    assert vs_market["n"] == 3
+    assert vs_market["brier_model"] == pytest.approx(vs_market["brier_market"])

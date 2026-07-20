@@ -6,10 +6,12 @@ from weather.calibration_params import get_calibration
 from weather.probability import (
     bracket_probability,
     calibrated_bracket_probability,
+    calibrated_observation_conditioned_probability,
     calibrated_probability_for_market,
     check_boundary_language,
     fit_normal,
     heteroscedastic_bracket_probability,
+    observation_conditioned_bracket_probability,
     heteroscedastic_scale,
     probability_for_market,
     temperature_in_bracket,
@@ -258,3 +260,102 @@ def test_calibrated_probability_for_market_runs_the_cross_check():
             ensemble_mean=80.0,
             target_month=1,
         )
+
+
+# --- observation-conditioned probability (the 2026-07-20 no-edge fix) ---
+
+# A realistic 6-bracket ladder, same shape Kalshi lists per event.
+_LADDER = [(None, 73.0), (73.0, 74.0), (75.0, 76.0), (77.0, 78.0), (79.0, 80.0), (80.0, None)]
+
+
+def _conditioned_ladder(metric, observed, loc=77.0, scale=1.9, **kwargs):
+    return [
+        observation_conditioned_bracket_probability(loc, scale, floor, cap, metric, observed, **kwargs)
+        for floor, cap in _LADDER
+    ]
+
+
+@pytest.mark.parametrize("observed", [60.0, 74.0, 77.0, 79.5, 84.0])
+def test_conditioned_max_ladder_still_partitions_to_one(observed):
+    # The partition invariant has to survive conditioning: collapsing mass onto
+    # the already-observed value must move probability between brackets, never
+    # create or destroy it.
+    assert sum(_conditioned_ladder("max", observed)) == pytest.approx(1.0, abs=1e-9)
+
+
+@pytest.mark.parametrize("observed", [90.0, 79.5, 74.0, 60.0])
+def test_conditioned_min_ladder_still_partitions_to_one(observed):
+    assert sum(_conditioned_ladder("min", observed)) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_bracket_below_an_already_observed_high_is_impossible():
+    # The core failure being fixed: the unconditional model kept assigning real
+    # probability to brackets the day had already ruled out. A daily high can't
+    # land below a temperature the station has already recorded.
+    assert observation_conditioned_bracket_probability(77.0, 1.9, None, 73.0, "max", 84.0) == 0.0
+    assert observation_conditioned_bracket_probability(77.0, 1.9, 73.0, 74.0, "max", 84.0) == 0.0
+    # ...and the unconditional path is exactly what did assign it mass.
+    assert bracket_probability(77.0, 1.9, None, 73.0) > 0.0
+
+
+def test_bracket_above_an_already_observed_low_is_impossible():
+    # The mirror case for low-temperature series: a daily low can't come in
+    # above a temperature already recorded.
+    assert observation_conditioned_bracket_probability(77.0, 1.9, 80.0, None, "min", 70.0) == 0.0
+
+
+def test_observed_bracket_absorbs_the_already_happened_mass():
+    # The bracket containing the observation picks up the point mass for "the
+    # day's extreme has already happened," so it must end up strictly more
+    # likely than the unconditional model made it.
+    conditioned = observation_conditioned_bracket_probability(77.0, 1.9, 77.0, 78.0, "max", 77.0)
+    unconditional = bracket_probability(77.0, 1.9, 77.0, 78.0)
+    assert conditioned > unconditional
+    assert conditioned == pytest.approx(0.7845, abs=1e-3)
+
+
+def test_observation_far_from_the_forecast_leaves_it_unchanged():
+    # An observation that rules nothing out (a cool morning reading, for a
+    # daily *high*) should reproduce the unconditional distribution — the
+    # conditioning is information, not a thumb on the scale.
+    assert _conditioned_ladder("max", 60.0) == pytest.approx(
+        [bracket_probability(77.0, 1.9, floor, cap) for floor, cap in _LADDER], abs=1e-9
+    )
+
+
+def test_shrinking_remaining_scale_concentrates_the_distribution():
+    # Less of the day left = less room left to move above what's been seen.
+    wide = observation_conditioned_bracket_probability(77.0, 1.9, 80.0, None, "max", 77.0)
+    narrow = observation_conditioned_bracket_probability(
+        77.0, 1.9, 80.0, None, "max", 77.0, remaining_scale_fraction=0.2
+    )
+    assert narrow < wide
+
+
+def test_rejects_a_bad_metric_or_scale_fraction():
+    with pytest.raises(ValueError):
+        observation_conditioned_bracket_probability(77.0, 1.9, 79.0, 80.0, "mean", 77.0)
+    with pytest.raises(ValueError):
+        observation_conditioned_bracket_probability(
+            77.0, 1.9, 79.0, 80.0, "max", 77.0, remaining_scale_fraction=0.0
+        )
+
+
+def test_calibrated_conditioned_falls_back_when_nothing_is_observed():
+    # A market settling tomorrow genuinely has no observation — it must price
+    # identically to the old calibrated path, not silently differently.
+    assert calibrated_observation_conditioned_probability(
+        "KXHIGHNY", 80.0, 79.0, 80.0, 7, "max", None
+    ) == pytest.approx(calibrated_bracket_probability("KXHIGHNY", 80.0, 79.0, 80.0, 7))
+
+
+def test_calibrated_conditioned_applies_the_same_seasonal_bias():
+    # Conditioning must compose with the per-city bias correction, not bypass
+    # it: an observation below the forecast leaves the bias-shifted mean intact.
+    params = get_calibration("KXHIGHNY")
+    expected = observation_conditioned_bracket_probability(
+        80.0 + params.bias_for_month(7), params.std, 79.0, 80.0, "max", 60.0
+    )
+    assert calibrated_observation_conditioned_probability(
+        "KXHIGHNY", 80.0, 79.0, 80.0, 7, "max", 60.0
+    ) == pytest.approx(expected)
