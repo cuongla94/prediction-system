@@ -29,6 +29,24 @@
     <div class="banner banner-warning">Can't reach the database right now: {{ db_error }}</div>
     {% else %}
 
+    {% if stuck %}
+    <div class="banner banner-warning" style="margin:0 0 22px">
+      <strong>{{ stuck|length }} run{{ 's' if stuck|length != 1 else '' }} stuck in “running” for over {{ stuck_after }}</strong>
+      — started but never recorded an outcome, so the process died without its exit handler running.
+      <ul style="margin:8px 0 0 18px">
+        {% for run in stuck %}
+        <li><code>{{ run.script }}</code> started {{ run.started_at|pacific }}</li>
+        {% endfor %}
+      </ul>
+      <br />
+      This is deliberately separate from the “stale” flags on the cards below, which only ask whether a
+      <em>new</em> run started recently — a later run succeeding hides an earlier one that never
+      finished. It is also not covered by the healthchecks.io dead-man's-switch, which only watches the
+      cron wrappers and so cannot see a script run by hand and interrupted. A two-day-old zombie hid in
+      exactly that blind spot on 2026-07-19 while every scheduled run around it succeeded.
+    </div>
+    {% endif %}
+
     <div class="stat-grid">
       {% for script in known_scripts %}
       {% set run = latest.get(script) %}

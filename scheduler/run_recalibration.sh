@@ -27,5 +27,22 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 UV="$HOME/.local/bin/uv"
 
+# The dead-man's-switch matters most for this one. A weekly job is the easiest
+# kind to lose silently — at that cadence a stall looks identical to "it just
+# hasn't run yet" for days, which is exactly how the 15-minute settlement cron
+# went unnoticed for hours after it was believed deployed.
+# shellcheck source=scheduler/healthcheck.sh
+. "$(dirname "${BASH_SOURCE[0]}")/healthcheck.sh"
+set -a; [ -f .env ] && . ./.env; set +a
+HC="${HEALTHCHECK_RECALIBRATION_URL:-}"
+hc_start "$HC"
+
 "$UV" run --no-sync python scripts/fit_calibration_params.py
-exit $?
+status=$?
+
+if [ "$status" -ne 0 ]; then
+  hc_fail "$HC"
+else
+  hc_success "$HC"
+fi
+exit "$status"

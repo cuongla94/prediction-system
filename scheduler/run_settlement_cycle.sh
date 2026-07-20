@@ -35,9 +35,20 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 UV="$HOME/.local/bin/uv"
 
+# shellcheck source=scheduler/healthcheck.sh
+. "$(dirname "${BASH_SOURCE[0]}")/healthcheck.sh"
+set -a; [ -f .env ] && . ./.env; set +a
+HC="${HEALTHCHECK_SETTLEMENT_URL:-}"
+hc_start "$HC"
+
 "$UV" run --no-sync python scripts/mark_settled_alerts.py
 settle_status=$?
 
 "$UV" run --no-sync python scripts/run_paper_trading.py
 
+if [ "$settle_status" -ne 0 ]; then
+  hc_fail "$HC"
+else
+  hc_success "$HC"
+fi
 exit "$settle_status"

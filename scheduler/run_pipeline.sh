@@ -27,6 +27,16 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 UV="$HOME/.local/bin/uv"
 
+# Dead-man's-switch. Sourced before anything else so a failure anywhere below
+# still reports. .env is read here rather than relying on the environment
+# because cron gives this script almost none — the same reason $UV is spelled
+# out in full above.
+# shellcheck source=scheduler/healthcheck.sh
+. "$(dirname "${BASH_SOURCE[0]}")/healthcheck.sh"
+set -a; [ -f .env ] && . ./.env; set +a
+HC="${HEALTHCHECK_PIPELINE_URL:-}"
+hc_start "$HC"
+
 "$UV" run --no-sync python scripts/generate_alerts.py
 generate_status=$?
 
@@ -47,5 +57,11 @@ settle_status=$?
 "$UV" run --no-sync python scripts/send_notifications.py
 
 if [ "$generate_status" -ne 0 ] || [ "$settle_status" -ne 0 ]; then
+  # /fail rather than just staying silent: this alerts immediately instead of
+  # waiting out the grace period. It matters because the wrapper deliberately
+  # runs every step regardless of earlier failures, so a single broken step
+  # would otherwise finish the run "normally" and ping success.
+  hc_fail "$HC"
   exit 1
 fi
+hc_success "$HC"
