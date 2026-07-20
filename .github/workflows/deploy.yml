@@ -33,8 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # @v7, not @v8: the latest *release* is v8.3.2, but astral-sh/setup-uv
+      # does not publish a floating `v8` major tag (verified 2026-07-20 --
+      # `git/ref/tags/v8` is a 404 while v6 and v7 resolve). Referencing a tag
+      # that doesn't exist fails the job at "Set up job", before any step runs,
+      # which is a confusing failure mode because nothing in the workflow body
+      # is implicated. Check the tag actually resolves before bumping this.
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v7
         with:
           # .python-version already pins 3.13; naming it here too makes the
           # CI interpreter explicit at the top of the run log.
