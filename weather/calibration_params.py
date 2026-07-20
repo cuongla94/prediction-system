@@ -14,11 +14,20 @@ forecast bias flips sign between winter and summer), but
 Philadelphia/Austin/Miami's seasonal variation is modest enough that the
 added estimation noise from smaller per-month samples outweighs the
 benefit, so flat wins for them.
+
+The CALIBRATION dict below is the committed *baseline*. As of 2026-07-20 a
+weekly cron re-runs the generator on the droplet and writes an untracked
+calibration_params_fitted.json alongside this file, which get_calibration()
+prefers when present -- a refit written into this tracked module would be
+reverted by the next deploy's `git reset --hard`. See
+weather/calibration_override.py.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from .calibration_override import load_override
 
 
 @dataclass(frozen=True)
@@ -320,6 +329,19 @@ CALIBRATION: dict[str, CalibrationParams] = {
 
 
 def get_calibration(series_ticker: str) -> CalibrationParams:
+    """The calibration actually in force for this series.
+
+    The CALIBRATION dict above is the committed baseline. A scheduled refit
+    (scheduler/run_recalibration.sh) writes an untracked JSON override that
+    takes precedence when present -- it has to be a separate untracked file
+    because this module is git-tracked and the droplet's deploy does
+    `git reset --hard`, which would silently revert a refit written here. See
+    weather/calibration_override.py for the full reasoning; it fails soft to
+    the baseline below if that file is missing or malformed.
+    """
+    override = load_override().get(series_ticker)
+    if override is not None:
+        return override
     try:
         return CALIBRATION[series_ticker]
     except KeyError:

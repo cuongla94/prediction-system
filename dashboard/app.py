@@ -23,6 +23,7 @@ from sizing.kelly import (
     max_event_exposure_setting,
     size_event,
 )
+from weather.calibration_override import load_override, override_metadata
 from weather.calibration_params import CALIBRATION, get_calibration
 from weather.nws_observations import fetch_today_extreme
 from weather.stations import STATIONS, get_station
@@ -336,9 +337,16 @@ class PipelineRun:
     detail: str | None
 
 
-# The scripts scheduler/{run_pipeline,run_settlement_cycle}.sh run — used to
-# show "never run" for a script with zero rows, not just omit it silently.
-_KNOWN_SCRIPTS = ["generate_alerts", "mark_settled_alerts", "run_paper_trading", "send_notifications"]
+# The scripts scheduler/{run_pipeline,run_settlement_cycle,run_recalibration}.sh
+# run — used to show "never run" for a script with zero rows, not just omit it
+# silently.
+_KNOWN_SCRIPTS = [
+    "generate_alerts",
+    "mark_settled_alerts",
+    "run_paper_trading",
+    "send_notifications",
+    "fit_calibration_params",
+]
 # Two different cadences, not one — added 2026-07-20 after a real gap this
 # single flat threshold hid: generate_alerts/send_notifications still run via
 # run_pipeline.sh's ~6h cadence, but mark_settled_alerts/run_paper_trading
@@ -350,11 +358,19 @@ _KNOWN_SCRIPTS = ["generate_alerts", "mark_settled_alerts", "run_paper_trading",
 # that short of manually diffing pipeline_runs timestamps. 30 minutes is 2x
 # the 15-min cadence, the same "a couple cycles of buffer, not zero" margin
 # the 8h/~6h ratio already used for the slower pair.
+#
+# fit_calibration_params was added to this list 2026-07-20 alongside the weekly
+# recalibration cron, for precisely the reason the 15-min gap above was missed:
+# a job nothing watches is a job that can stop firing unnoticed. A weekly job is
+# the *easiest* kind to lose silently — at that cadence a stall looks identical
+# to "it just hasn't run yet" for days. 9 days is one full cycle of slack past
+# its 7-day period, so a single skipped Sunday flags rather than needing two.
 _STALE_AFTER: dict[str, timedelta] = {
     "generate_alerts": timedelta(hours=8),
     "send_notifications": timedelta(hours=8),
     "mark_settled_alerts": timedelta(minutes=30),
     "run_paper_trading": timedelta(minutes=30),
+    "fit_calibration_params": timedelta(days=9),
 }
 _DEFAULT_STALE_AFTER = timedelta(hours=8)
 # The cadence each script is actually scheduled at (scheduler/*.sh) — distinct
@@ -366,6 +382,7 @@ _CADENCE = {
     "send_notifications": "~6h",
     "mark_settled_alerts": "15m",
     "run_paper_trading": "15m",
+    "fit_calibration_params": "weekly",
 }
 
 
@@ -407,8 +424,14 @@ def status():
     }
 
     def _label(delta: timedelta) -> str:
+        # Days matter now that the weekly recalibration job is tracked here —
+        # rendering its 9-day threshold as "216h" is technically correct and
+        # completely unreadable.
         minutes = int(delta.total_seconds() // 60)
-        return f"{minutes}m" if minutes < 60 else f"{minutes // 60}h"
+        if minutes < 60:
+            return f"{minutes}m"
+        hours = minutes // 60
+        return f"{hours}h" if hours < 48 else f"{hours // 24}d"
 
     return render_template(
         "status.html",
@@ -462,9 +485,16 @@ def _calibration_rows(calibration_detail: list[dict] | None) -> list[Calibration
     # rather than crashing.
     brier_by_series = {row["series_ticker"]: row for row in (calibration_detail or []) if "series_ticker" in row}
     brier_by_city_fallback = {row["city"]: row for row in (calibration_detail or [])}
+    # What is ACTUALLY in force, not the committed baseline. Since 2026-07-20 a
+    # weekly cron can write an untracked JSON override that get_calibration()
+    # prefers (see weather/calibration_override.py), so reading the CALIBRATION
+    # dict directly here would show numbers the live model isn't using — the
+    # precise failure mode the override design has to avoid, on the one page
+    # whose entire job is answering "what is this thing calibrated to."
+    override = load_override()
     rows = []
     for station in STATIONS.values():
-        params = CALIBRATION.get(station.series_ticker)
+        params = override.get(station.series_ticker) or CALIBRATION.get(station.series_ticker)
         if params is None:
             continue
         brier = brier_by_series.get(station.series_ticker) or brier_by_city_fallback.get(station.city)
@@ -510,6 +540,14 @@ def backtest():
     # every script that has ever run, including this one.
     backtest_run = latest.get("run_backtest")
     reliability = _parse_json_detail(backtest_run)
+    # Which series' live params differ from the committed baseline, so the page
+    # can say so explicitly rather than leaving the divergence invisible.
+    override = load_override()
+    override_diff = sorted(
+        STATIONS[t].city + (" Low" if STATIONS[t].metric == "min" else " High")
+        for t, p in override.items()
+        if t in STATIONS and CALIBRATION.get(t) != p
+    )
     return render_template(
         "backtest.html",
         db_error=db_error,
@@ -520,6 +558,8 @@ def backtest():
         noaa_mismatch_lines=noaa_mismatch_lines,
         backtest_run=backtest_run,
         reliability=reliability if isinstance(reliability, dict) else None,
+        override_meta=override_metadata(),
+        override_diff=override_diff,
     )
 
 

@@ -1,0 +1,124 @@
+name: CI & Deploy
+
+# Push-to-deploy, added 2026-07-20. Replaces the previous manual
+# rsync + ssh + systemctl restart flow (see deploy/README.md).
+#
+# THIS REPOSITORY IS PUBLIC: this file and every run log are world-readable.
+# Two consequences that constrain everything below:
+#   1. No secret may be interpolated inline into a `run:` block. `${{ }}` is
+#      textual substitution into the shell script, so a secret containing
+#      shell metacharacters becomes executable text. Secrets go through
+#      `env:` and are referenced as "$VAR" instead.
+#   2. The droplet's address is itself a secret rather than a literal here,
+#      so the deploy target isn't published alongside the code.
+#
+# The deploy key this uses is NOT a general-purpose root key: it is pinned on
+# the droplet to a forced command (`command="/usr/local/bin/kalshi-deploy"` in
+# root's authorized_keys), so it cannot open a shell, forward a port, or read
+# .env even though it authenticates as root. See deploy/README.md.
+
+on:
+  push:
+    branches: [main]
+
+# Least privilege: nothing in this workflow writes back to the repository.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests & lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          # .python-version already pins 3.13; naming it here too makes the
+          # CI interpreter explicit at the top of the run log.
+          python-version: "3.13"
+          # Defaults to "auto" (on for GitHub-hosted runners); explicit for
+          # clarity. The default cache-dependency-glob already keys on uv.lock.
+          enable-cache: true
+
+      # --locked, deliberately NOT --frozen: this errors if uv.lock is stale
+      # relative to pyproject.toml. That's a real gate, not a formality — a
+      # dependency bump committed without regenerating the lock would
+      # otherwise pass CI here and then deploy the OLD resolution to the
+      # droplet, since deploys install with --frozen.
+      #
+      # The `dev` group (pytest + ruff) is installed by default; --all-groups
+      # is a no-op today and only future-proofs adding a separate test group.
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      # --no-sync on both steps: the environment was just synced above, and
+      # without it `uv run` re-locks and re-syncs on every single invocation.
+      - name: Lint
+        run: uv run --no-sync ruff check .
+
+      - name: Tests
+        run: uv run --no-sync pytest -q
+
+  deploy:
+    name: Deploy to droplet
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-level rather than workflow-level, so `test` still runs in parallel
+    # across pushes and only the deploy itself serializes.
+    #
+    # cancel-in-progress: false — a half-applied deploy must never be killed
+    # partway through. Note GitHub holds at most ONE pending run per group, so
+    # a third push cancels the middle *pending* one; that's the desired
+    # "deploy latest" behaviour, and the remote wrapper's monotonicity check
+    # is what stops an out-of-order run from regressing production.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      # No checkout step on purpose: this job only opens an SSH session. The
+      # droplet fetches its own code straight from GitHub, so the runner never
+      # needs a copy of the tree.
+      - name: Deploy
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+
+          # umask before creating anything, so the private key is never even
+          # briefly group/world-readable.
+          umask 077
+          mkdir -p ~/.ssh
+
+          # printf, not echo: OpenSSH rejects a private key that doesn't end
+          # in exactly one newline, and echo's behaviour varies by shell.
+          printf '%s\n' "$DEPLOY_SSH_KEY"     > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+          # The host key is pinned from a secret rather than discovered with
+          # ssh-keyscan at runtime — keyscan-then-trust would accept whatever
+          # answers, defeating the point. StrictHostKeyChecking=yes means a
+          # rebuilt droplet fails closed with a host-key mismatch (expected
+          # and correct: re-capture the key and update the secret).
+          #
+          # $GITHUB_SHA is passed as the SSH command. The droplet's forced
+          # command ignores it as a command and reads it as
+          # $SSH_ORIGINAL_COMMAND, validating it is a 40-hex SHA that is
+          # genuinely on origin/main. Pinning the exact SHA is what makes the
+          # test gate meaningful: without it, a commit landing between the
+          # test job and this one would be deployed untested.
+          ssh -i ~/.ssh/deploy_key \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ConnectTimeout=15 \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=8 \
+              "$DEPLOY_HOST" "$GITHUB_SHA"

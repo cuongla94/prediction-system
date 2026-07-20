@@ -99,13 +99,66 @@ substituted to `/opt/kalshi-prediction-market`. Logs land in
 
 ## Updating after a code change
 
+**Push to `main`.** That's the whole procedure as of 2026-07-20 —
+`.github/workflows/deploy.yml` runs the test suite and ruff, and only if both
+pass does it SSH to the droplet, move it to that exact commit, `uv sync`,
+reinstall the crontab if `scheduler/crontab.example` changed, restart both
+services, and verify they came back healthy.
+
+> The instructions that used to live here (`git pull` + `sudo -u kalshi uv sync`
+> + restart) were wrong on two counts, which is worth recording rather than
+> quietly deleting: `/opt/kalshi-prediction-market` was an `rsync` copy with no
+> `.git` at all, so `git pull` could never have worked; and `sudo -u kalshi uv
+> sync` fails because that account has no `~/.local/bin` on PATH — the same
+> gotcha `scheduler/run_pipeline.sh` already documents. They also only ever
+> restarted `kalshi-dashboard`, silently leaving `kalshi-price-feed` on old code.
+
+### How the deploy is locked down
+
+The CI key authenticates as root but is **not** a general-purpose root key. In
+`/root/.ssh/authorized_keys` it is pinned to a forced command:
+
+```
+restrict,command="/usr/local/bin/kalshi-deploy" ssh-ed25519 AAAA... github-actions-deploy
+```
+
+`command=` makes sshd ignore whatever the client asks to run and execute only
+that script; `restrict` disables pty allocation, port/agent/X11 forwarding and
+user rc files. The requested command reaches the script as
+`$SSH_ORIGINAL_COMMAND`, which it treats as untrusted input and accepts only as
+a 40-char hex SHA that is genuinely an ancestor of `origin/main` and not older
+than what's deployed. So a leaked `DEPLOY_SSH_KEY` can trigger a redeploy of
+already-published code and nothing else — no shell, no reading `.env`.
+
+`/usr/local/bin/kalshi-deploy` lives on the droplet only (root:root 0755) and
+is deliberately tiny and stable. The real logic is `deploy/remote_deploy.sh` in
+this repo, which it `exec`s from the freshly-checked-out tree — so deploy
+changes get code-reviewed like anything else.
+
+Three GitHub Actions secrets are required: `DEPLOY_SSH_KEY` (the CI private
+key), `DEPLOY_KNOWN_HOSTS` (`ssh-keyscan -t ed25519 <droplet-ip>`), and
+`DEPLOY_HOST` (`root@<droplet-ip>`, a secret so the address isn't published in
+a public repo).
+
+Note `.git` is root-owned `0700` while the rest of the tree belongs to
+`kalshi`. That's load-bearing: a `kalshi`-writable `.git` would let that
+account set `filter.*.smudge` in `.git/config`, which root's own git commands
+then execute. It's also why every `uv run` in `scheduler/*.sh` passes
+`--no-sync` — `uv run` otherwise tries to re-lock and write to the project root.
+
+### Rolling back, or deploying by hand
+
+Your own operator key still has a normal shell. The deploy wrapper refuses to
+move to an older commit on purpose (an automated rollback should never happen
+silently), so a rollback is a deliberate manual act:
+
 ```bash
 ssh root@<droplet-ip>
 cd /opt/kalshi-prediction-market
-git pull                          # or re-scp if not using git
-sudo -u kalshi uv sync
-systemctl restart kalshi-dashboard
+git fetch origin main
+git reset --hard <known-good-sha>
+bash deploy/remote_deploy.sh <known-good-sha>
 ```
 
-The crontab doesn't need reinstalling unless `scheduler/crontab.example`
-itself changed.
+`git reset --hard` does not remove untracked files, so `.env`, `secrets/`,
+`certs/`, `logs/*.log` and `.venv/` survive it.

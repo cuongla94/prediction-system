@@ -27,9 +27,31 @@
     <p class="section-note">
       Each city's day-ahead ensemble forecast gets a bias correction before being turned into a
       probability — either one flat number, or a different number per calendar month, whichever one
-      actually scored better on held-out data when last fit. Re-run with
-      <code>uv run scripts/fit_calibration_params.py</code> as more settled days accumulate.
+      actually scored better on held-out data when last fit. The table below shows what is
+      <em>actually in force</em>, which since 2026-07-20 may be a weekly automatic re-fit rather than
+      the values committed to <code>weather/calibration_params.py</code>.
     </p>
+    {% if override_meta %}
+    <div class="banner" style="margin:0 0 18px">
+      <strong>Live params come from the weekly automatic re-fit</strong>, not the committed baseline.
+      Fit {{ override_meta.fit_date }} over {{ override_meta.start_date }} → {{ override_meta.end_date }},
+      covering {{ override_meta.series_count }} series.
+      {% if override_diff %}
+      <br /><br />
+      <strong>{{ override_diff|length }} series differ from the committed baseline:</strong>
+      {{ override_diff|join(', ') }}.
+      To promote the current fit into the repo, run
+      <code>uv run scripts/fit_calibration_params.py</code> locally and commit the resulting
+      <code>weather/calibration_params.py</code> diff.
+      {% else %}
+      No series currently differs from the committed baseline.
+      {% endif %}
+      <br /><br />
+      This override lives in an untracked file on purpose — the droplet's deploy does
+      <code>git reset --hard</code>, which would silently revert a re-fit written into a tracked
+      file. It falls back to the committed baseline if it's ever missing or unreadable.
+    </div>
+    {% endif %}
     {% if not calibration_run %}
     <p class="empty">fit_calibration_params.py has never been run against this database.</p>
     {% else %}

@@ -29,6 +29,8 @@ from backtest.calibration import brier_score
 from backtest.harness import fit_empirical_normal, fit_monthly_bias, split_by_date
 from kalshi_client import KalshiClient
 from monitoring import track_run
+from weather.calibration_override import clear_cache, write_override
+from weather.calibration_params import CalibrationParams
 from weather.probability import bracket_probability
 from weather.stations import STATIONS
 
@@ -54,11 +56,20 @@ forecast bias flips sign between winter and summer), but
 Philadelphia/Austin/Miami's seasonal variation is modest enough that the
 added estimation noise from smaller per-month samples outweighs the
 benefit, so flat wins for them.
+
+The CALIBRATION dict below is the committed *baseline*. As of 2026-07-20 a
+weekly cron re-runs the generator on the droplet and writes an untracked
+calibration_params_fitted.json alongside this file, which get_calibration()
+prefers when present -- a refit written into this tracked module would be
+reverted by the next deploy's `git reset --hard`. See
+weather/calibration_override.py.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from .calibration_override import load_override
 
 
 @dataclass(frozen=True)
@@ -82,6 +93,19 @@ CALIBRATION: dict[str, CalibrationParams] = {{
 _FOOTER = '''
 
 def get_calibration(series_ticker: str) -> CalibrationParams:
+    """The calibration actually in force for this series.
+
+    The CALIBRATION dict above is the committed baseline. A scheduled refit
+    (scheduler/run_recalibration.sh) writes an untracked JSON override that
+    takes precedence when present -- it has to be a separate untracked file
+    because this module is git-tracked and the droplet's deploy does
+    `git reset --hard`, which would silently revert a refit written here. See
+    weather/calibration_override.py for the full reasoning; it fails soft to
+    the baseline below if that file is missing or malformed.
+    """
+    override = load_override().get(series_ticker)
+    if override is not None:
+        return override
     try:
         return CALIBRATION[series_ticker]
     except KeyError:
@@ -164,6 +188,37 @@ def main() -> None:
         with open(_OUTPUT_PATH, "w") as f:
             f.write(content)
         print(f"\nWrote {_OUTPUT_PATH}")
+
+        # Both outputs, on purpose — they serve different readers.
+        #
+        # The .py above is the reviewable artifact: running this locally leaves
+        # a readable `git diff` you can inspect and commit to promote a fit to
+        # the committed baseline.
+        #
+        # The JSON is what actually takes effect on the droplet. This module is
+        # git-tracked and the deploy does `git reset --hard`, so the .py write
+        # is reverted by the next push to main; the JSON is gitignored and
+        # survives. Without it, the weekly cron would silently undo itself.
+        # See weather/calibration_override.py.
+        override_path = write_override(
+            {
+                r["series_ticker"]: CalibrationParams(
+                    overall_bias=r["overall_bias"],
+                    monthly_bias=r["monthly_bias"],
+                    std=r["std"],
+                    fit_date=fit_date,
+                    fit_days=r["fit_days"],
+                )
+                for r in results
+            },
+            fit_date=fit_date,
+            start_date=START_DATE,
+            end_date=END_DATE,
+        )
+        # Anything already holding a cached copy in this process (the fit
+        # imports the probability stack transitively) should see the new file.
+        clear_cache()
+        print(f"Wrote {override_path} (this is what takes effect on the droplet)")
 
         # Structured, not prose, so the dashboard's /backtest page can render
         # this directly instead of a human having to re-run the script and

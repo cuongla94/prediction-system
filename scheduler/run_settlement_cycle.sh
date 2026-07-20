@@ -26,13 +26,18 @@
 # depend on, so those stay on their own schedule in run_pipeline.sh — no
 # reason to run the (comparatively slow, live-ensemble-forecast-fetching)
 # generate_alerts.py every 15 minutes just to get faster settlement checks.
+#
+# --no-sync on both `uv run` calls below matters more here than anywhere else
+# in this project, because of this script's */15 cadence: without it `uv run`
+# re-locks and re-syncs first, so a deploy landing mid-cycle would have two
+# processes mutating .venv at once. See run_pipeline.sh's fuller note.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 UV="$HOME/.local/bin/uv"
 
-"$UV" run python scripts/mark_settled_alerts.py
+"$UV" run --no-sync python scripts/mark_settled_alerts.py
 settle_status=$?
 
-"$UV" run python scripts/run_paper_trading.py
+"$UV" run --no-sync python scripts/run_paper_trading.py
 
 exit "$settle_status"

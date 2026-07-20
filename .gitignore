@@ -19,6 +19,13 @@ secrets/
 certs/
 .claude/settings.local.json
 
+# Live fitted calibration, written by the weekly recalibration cron. Untracked
+# ON PURPOSE and not an oversight: the droplet's deploy does `git reset --hard`,
+# so a refit written to a tracked file would be silently reverted by the next
+# push to main. weather/calibration_params.py stays the committed baseline and
+# this overrides it at runtime. See weather/calibration_override.py.
+weather/calibration_params_fitted.json
+
 # Data
 *.db
 *.sqlite3

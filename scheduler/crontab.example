@@ -27,3 +27,8 @@
 
 0 5,11,17,23 * * * /path/to/kalshi-prediction-market/scheduler/run_pipeline.sh >> /path/to/kalshi-prediction-market/logs/pipeline.log 2>&1
 */15 * * * * /path/to/kalshi-prediction-market/scheduler/run_settlement_cycle.sh >> /path/to/kalshi-prediction-market/logs/settlement_cycle.log 2>&1
+# Weekly re-fit of the bias/std calibration (see run_recalibration.sh for why
+# weekly rather than daily). Sunday 09:00 UTC = 01:00/02:00 Pacific, chosen to
+# sit well clear of the 05/11/17/23 pipeline slots so the two never contend for
+# the single vCPU -- this is by far the heaviest job here on a cold cache.
+0 9 * * 0 /path/to/kalshi-prediction-market/scheduler/run_recalibration.sh >> /path/to/kalshi-prediction-market/logs/recalibration.log 2>&1
