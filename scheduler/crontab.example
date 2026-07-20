@@ -5,9 +5,17 @@
 # Runs ~4-5 hours after each GFS/ICON model init (00Z/06Z/12Z/18Z), giving
 # Open-Meteo time to ingest the new run before we poll it; ECMWF often lags
 # further behind but the ensemble blend still benefits from whichever models
-# have refreshed by the time this fires. The settlement check is cheap
-# (skips anything not yet resolved), so it rides along on the same cadence
-# rather than needing its own schedule.
+# have refreshed by the time this fires.
+#
+# Settlement checking has its own, much tighter schedule below (see
+# run_settlement_cycle.sh) — added 2026-07-20 after a real gap: waiting for
+# this slower 4x/day cadence meant a market that settled shortly after one
+# check could sit unrecognized (paper position still "open", its cash still
+# "tied up") for up to ~6 hours before the next one caught it. The settlement
+# check itself is cheap (one paginated get_markets() call per series, not one
+# per pending market — see mark_settled_alerts.py's own docstring), so there's
+# no real cost to running it every 15 minutes independent of the slower
+# forecast/price refresh above.
 #
 # Install (after replacing /path/to/kalshi-prediction-market below with the
 # real deployment path — cron needs an absolute path, it won't expand ~ or
@@ -18,3 +26,4 @@
 # should own that if the log file grows large.
 
 0 5,11,17,23 * * * /path/to/kalshi-prediction-market/scheduler/run_pipeline.sh >> /path/to/kalshi-prediction-market/logs/pipeline.log 2>&1
+*/15 * * * * /path/to/kalshi-prediction-market/scheduler/run_settlement_cycle.sh >> /path/to/kalshi-prediction-market/logs/settlement_cycle.log 2>&1
