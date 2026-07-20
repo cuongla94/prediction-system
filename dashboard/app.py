@@ -45,6 +45,15 @@ app = Flask(__name__)
 # invalidates existing sessions, not a security hole.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 app.permanent_session_lifetime = timedelta(days=3)
+# Lax, not None: the session cookie shouldn't ride along on cross-site requests.
+# There are no state-changing trading actions exposed here (this dashboard is
+# read-only over Kalshi), so the CSRF surface is small — /logout is the only
+# meaningful POST — but Lax costs nothing and closes it.
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# SESSION_COOKIE_SECURE stays False deliberately: the droplet serves plain HTTP
+# (no domain, so no Let's Encrypt cert), and setting Secure would stop the
+# cookie being sent at all, breaking login entirely. This is a symptom of the
+# no-TLS posture, not an independent choice — flip it the moment TLS lands.
 
 
 def _valid_passcodes() -> set[str]:
@@ -54,12 +63,27 @@ def _valid_passcodes() -> set[str]:
 
 @app.before_request
 def _require_login():
-    # No PASSCODES configured at all means the operator hasn't opted into
-    # this gate — don't lock everyone out of a dashboard that was reachable
-    # without it a moment ago. Once at least one code is set, everything
-    # except the login page itself and static assets requires a session.
-    if not _valid_passcodes() or request.endpoint in ("login", "static"):
+    if request.endpoint in ("login", "static"):
         return None
+
+    # Fail CLOSED when no passcode is configured. This used to return None —
+    # i.e. serve every page unauthenticated — on the reasoning that the
+    # operator hadn't opted into the gate. That is a bad default here for a
+    # specific, already-observed reason: this project has previously shipped a
+    # bug where `.env` was silently never loaded at all (load_dotenv was only
+    # called inside KalshiClient.from_env, so every other entry point read an
+    # empty environment). Under the old behaviour that bug would have quietly
+    # turned the whole dashboard public, on a box that opportunistic scanners
+    # probe for /.env and /.git/HEAD daily, with nothing visible to say so.
+    #
+    # Failing closed makes that failure loud and harmless instead: the login
+    # page is served and nothing authenticates, which is recoverable over SSH.
+    if not _valid_passcodes():
+        return render_template(
+            "login.html",
+            error="No PASSCODES configured — refusing to serve unauthenticated. Check the .env on this host.",
+        ), 503
+
     if session.get("authenticated"):
         return None
     return redirect(url_for("login", next=request.path))
