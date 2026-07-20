@@ -1,12 +1,26 @@
 """Backtest the probability engine against ~1-2 years of settled Kalshi markets.
 
-Compares three ways of turning a day-ahead ensemble forecast into a bracket
-probability, all fit on the same chronological 70% of days and evaluated on the
-same held-out 30% (apples to apples):
+Compares four ways of turning a day-ahead ensemble forecast into a bracket
+probability, all evaluated on the same held-out chronological 30% (apples to
+apples):
 
-- Normal:      fixed empirical bias + fixed std — what the live pipeline
-               actually uses (calibrated_bracket_probability), so its reliability
-               here is the honest answer to "is the live model over/under-confident?"
+- Shipped:     weather.probability.calibrated_bracket_probability, called
+               exactly the way generate_alerts.py calls it — whatever
+               weather/calibration_params.py currently ships for that row's
+               month, monthly bias where that beat flat, flat otherwise.
+               This is the only variant that is actually what the live
+               pipeline runs today; its reliability here is the honest
+               answer to "is the live model tradeable?" Added 2026-07-20
+               after "Normal" (below) was found to silently score a
+               different, less accurate model for every monthly-bias city
+               (NYC/Chicago/Denver) — see kalshi-backtest-findings memory.
+- Normal:      fixed empirical bias + fixed std, refit fresh on THIS run's
+               70% fit split every time this script runs. NOT the same
+               number as "Shipped" for a monthly-bias city — this is a flat,
+               non-seasonal refit, answering "how does a flat correction
+               compare to other distribution shapes," not "what does the
+               live pipeline use." Kept for that distribution-shape
+               comparison, not as a live-pipeline proxy.
 - Student's t: fatter tails, fit directly on the residuals. Tried and rejected
                earlier (no Brier improvement) — kept as a standing check that it
                still doesn't win as more data accrues.
@@ -37,16 +51,21 @@ from backtest.cache import cached_collect_rows
 from backtest.harness import BacktestRow, fit_empirical_normal, fit_spread_scale, fit_student_t, split_by_date
 from kalshi_client import KalshiClient
 from monitoring import track_run
-from weather.probability import bracket_probability, heteroscedastic_bracket_probability
+from weather.probability import bracket_probability, calibrated_bracket_probability, heteroscedastic_bracket_probability
 from weather.stations import STATIONS
 
 START_DATE = "2024-10-01"
 END_DATE = (date.today() - timedelta(days=1)).isoformat()
 
-# Display label -> key stored in the reliability detail. "normal" is the
-# live-pipeline model, listed first deliberately since it's the one whose
-# calibration actually matters for live use.
+# Display label -> key stored in the reliability detail. "shipped" is the
+# actual live-pipeline model (weather.calibration_params' fitted bias/std,
+# monthly where that beat flat, flat otherwise), listed first deliberately
+# since it's the one whose calibration actually matters for live use — see
+# the "normal" entry's own docstring note below for why it is NOT the same
+# thing and shouldn't be read as a live-pipeline proxy for a monthly-bias
+# city.
 VARIANTS: tuple[tuple[str, str], ...] = (
+    ("Shipped  ", "shipped"),
     ("Normal   ", "normal"),
     ("Student t", "student_t"),
     ("Blended  ", "blended_std"),
@@ -65,11 +84,34 @@ def _print_calibration(label: str, predictions: list[float], outcomes: list[bool
 
 
 def evaluate_city(series_ticker: str, rows: list[BacktestRow]) -> dict:
-    """Fit all three variants on the chronological-70% split and score them on
+    """Fit all variants on the chronological-70% split and score them on
     the held-out 30%. Pure given `rows` (no I/O), so it's testable with
     synthetic BacktestRows. Returns per-variant eval predictions plus the
     shared outcomes and the fitted parameters — the caller pools predictions
-    across cities (build_backtest_detail) rather than this storing them."""
+    across cities (build_backtest_detail) rather than this storing them.
+
+    "normal"/"student_t"/"blended_std" all fit their own bias fresh on THIS
+    run's fit_rows — a flat (non-seasonal) bias, refit each time this script
+    runs, answering "which distribution shape is least wrong." That is not
+    the same number the live pipeline actually uses for a monthly-bias city
+    (NYC/Chicago/Denver, per weather/calibration_params.py) — those cities'
+    live bias varies by calendar month and comes from a separate, earlier
+    fit (scripts/fit_calibration_params.py), not from this script at all.
+    Scoring "normal" as if it stood in for live calibration was fair only
+    for the flat-bias cities; for a monthly city it silently evaluated a
+    different, less accurate model than the one actually running (found
+    2026-07-20, see kalshi-backtest-findings memory — NYC's live July bias
+    is -1.46F, nothing this script fits comes close to that number).
+    "shipped" fixes this: it calls weather.probability.
+    calibrated_bracket_probability directly, the exact function generate_
+    alerts.py itself calls, so its bias/std for every eval row is whatever
+    weather/calibration_params.py actually ships for that row's month right
+    now — not refit, not approximated. This is the variant that answers "is
+    the live model tradeable," and _tradeable_verdict already picks whichever
+    variant has the best skill against the market, so adding this doesn't
+    change how any other variant is judged — it only means the live model
+    itself can now win (or lose) the verdict on its own real numbers.
+    """
     station = STATIONS[series_ticker]
     fit_rows, eval_rows = split_by_date(rows, fit_fraction=0.7)
 
@@ -77,9 +119,13 @@ def evaluate_city(series_ticker: str, rows: list[BacktestRow]) -> dict:
     t_df, t_loc, t_scale = fit_student_t(fit_rows)
     baseline_var, spread_coef = fit_spread_scale(fit_rows)
 
-    predictions: dict[str, list[float]] = {"normal": [], "student_t": [], "blended_std": []}
+    predictions: dict[str, list[float]] = {"shipped": [], "normal": [], "student_t": [], "blended_std": []}
     outcomes: list[bool] = []
     for row in eval_rows:
+        target_month = int(row.target_date.split("-")[1])
+        predictions["shipped"].append(
+            calibrated_bracket_probability(series_ticker, row.forecast_mean, row.floor_strike, row.cap_strike, target_month)
+        )
         predictions["normal"].append(
             bracket_probability(row.forecast_mean + normal_bias, normal_std, row.floor_strike, row.cap_strike)
         )
@@ -291,7 +337,7 @@ def main() -> None:
         tradeable = detail["tradeable"]
         run.summary = (
             f"Backtested {len(evaluations)} series ({detail['eval_rows_total']} held-out rows). "
-            f"Pooled Brier: normal={pooled['normal']['brier']}, "
+            f"Pooled Brier: shipped={pooled['shipped']['brier']}, normal={pooled['normal']['brier']}, "
             f"student_t={pooled['student_t']['brier']}, blended_std={pooled['blended_std']['brier']}. "
             f"Vs market: {tradeable['verdict']}"
         )

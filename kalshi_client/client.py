@@ -8,7 +8,7 @@ import httpx
 
 from .auth import KalshiCredentials, sign_request
 from .exceptions import KalshiAPIError, KalshiAuthError
-from .models import Event, Market, Position, Series
+from .models import Candlestick, Event, Market, Position, Series
 
 DEFAULT_BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
 
@@ -167,6 +167,29 @@ class KalshiClient:
         data = self._request("GET", "/markets", params=params)
         markets = [Market.from_dict(m) for m in data["markets"]]
         return markets, data.get("cursor") or None
+
+    def get_candlesticks(
+        self,
+        series_ticker: str,
+        market_ticker: str,
+        start_ts: int,
+        end_ts: int,
+        period_interval: int = 1,
+    ) -> list[Candlestick]:
+        """Intraday yes-bid/yes-ask close history for one market, `start_ts`
+        to `end_ts` (Unix seconds, UTC). `period_interval` is bucket width in
+        minutes — 1 minute by default, the finest Kalshi offers, to minimize
+        how stale a same-day backtest's "price as of this decision time"
+        snapshot is (see backtest/harness.py's day-ahead backtest, which only
+        needed one price per market; this is for the same-day proof, which
+        needs price as of a specific intraday instant).
+        """
+        data = self._request(
+            "GET",
+            f"/series/{series_ticker}/markets/{market_ticker}/candlesticks",
+            params={"start_ts": start_ts, "end_ts": end_ts, "period_interval": period_interval},
+        )
+        return [Candlestick.from_dict(c) for c in data["candlesticks"]]
 
     def get_historical_markets(
         self,

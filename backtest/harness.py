@@ -327,6 +327,98 @@ def fit_spread_scale(rows: list[BacktestRow]) -> tuple[float, float]:
     return max(baseline_var, _MIN_BASELINE_VAR), spread_coef
 
 
+def fit_remaining_scale_fraction(
+    known_as_of_decision: list[tuple[float, float, float]],
+    baseline_scale: float,
+) -> float:
+    """What fraction of the day-ahead `scale` actually remains once a same-day
+    observation is in hand — the empirical fit for weather.probability.
+    observation_conditioned_bracket_probability's `remaining_scale_fraction`,
+    left pinned at 1.0 (no shrinkage) everywhere it's currently called. Built
+    2026-07-20 for scripts/fit_remaining_scale.py, after a same-day backtest
+    proof confirmed the un-shrunk conditioning still loses badly to the
+    market and diagnosed why: `M`'s spread never narrows through the day the
+    way the market's implied uncertainty visibly does.
+
+    Each tuple is `(actual_final_temp, loc, observed_so_far)` for one
+    settled day, where `loc` is the same day-ahead-calibrated forecast mean
+    observation_conditioned_bracket_probability would use, and
+    `observed_so_far` is what the station had recorded by the decision time
+    in question (weather.historical_observations.extreme_as_of). The
+    model prices the final extreme as `max(observed_so_far, M)`,
+    `M ~ Normal(loc, scale)` — so what's left for `M` to explain, given both
+    the day-ahead forecast and the observation-to-date, is
+    `actual_final_temp - max(loc, observed_so_far)`: zero if the better of
+    the two already nailed it, the true remaining miss otherwise. This
+    residual's own spread (centered on its own mean, exactly like
+    fit_empirical_normal's residuals — a systematic over/under-shoot in
+    `max(loc, observed_so_far)` is a bias to note, not variance to inflate)
+    divided by `baseline_scale` is the fraction of the original day-ahead
+    spread this decision time's information hasn't already resolved.
+
+    Small-sample warning: with a proof-sized day count (this project's first
+    use was n=18), the resulting fraction carries real estimation noise of
+    its own — read it as "does shrinkage move the needle," not as a
+    validated production parameter, until fit on far more days.
+
+    Clamped to (0, 1] to satisfy observation_conditioned_bracket_probability's
+    own validation — 1.0 if the residual spread came out at or above the
+    day-ahead baseline (this decision time's information didn't measurably
+    shrink anything), a small positive floor if it came out at effectively
+    zero (never actually 0, which the callee rejects outright).
+    """
+    if len(known_as_of_decision) < 2:
+        raise ValueError(f"Need at least 2 days to fit a remaining-scale fraction, got {len(known_as_of_decision)}.")
+    if baseline_scale <= 0:
+        raise ValueError(f"baseline_scale must be positive, got {baseline_scale}.")
+    residuals = [actual - max(loc, observed) for actual, loc, observed in known_as_of_decision]
+    mean_residual = sum(residuals) / len(residuals)
+    variance = sum((r - mean_residual) ** 2 for r in residuals) / (len(residuals) - 1)
+    fraction = variance**0.5 / baseline_scale
+    return min(max(fraction, 0.01), 1.0)
+
+
+def classify_forecast_vs_bracket(loc: float, floor_strike: float | None, cap_strike: float | None) -> str:
+    """Whether a point forecast `loc` falls inside, above ("hot"), or below
+    ("cold") the *winning* bracket's true continuous range — the same
+    half-degree continuity correction weather.probability.bracket_probability
+    uses (floor-0.5 to cap+0.5 for a "between" bracket, open-ended the other
+    two ways), not weather.probability.temperature_in_bracket's raw-integer
+    convention (that one compares an already-whole-degree actual reading,
+    not a continuous point forecast like `loc`).
+
+    Built 2026-07-20 to check whether the day-ahead `loc` used throughout the
+    same-day proof is itself running systematically hot — see
+    kalshi-backtest-findings memory. The point of going through the winning
+    *bracket* rather than a reconstructed point value for the actual
+    temperature is that it works for every settled day, tail-bracket wins
+    included (BacktestRow.approx_actual_temp is None for those — a tail win
+    only gives an inequality, not a value), where fit_remaining_scale_
+    fraction's point-value approach could only use 7 of an 18-day window.
+
+    For a one-sided (tail) bracket only the direction that bracket's win
+    can actually indicate is returned ("hot" for the lowest bracket in a
+    ladder winning, since there's no lower bound to have undershot; "cold"
+    for the highest bracket winning, since there's no upper bound to have
+    overshot) — the other direction is folded into "inside" rather than
+    invented.
+    """
+    if floor_strike is None and cap_strike is not None:
+        high = cap_strike - 0.5
+        return "hot" if loc > high else "inside"
+    if cap_strike is None and floor_strike is not None:
+        low = floor_strike + 0.5
+        return "cold" if loc < low else "inside"
+    if floor_strike is not None and cap_strike is not None:
+        low, high = floor_strike - 0.5, cap_strike + 0.5
+        if loc > high:
+            return "hot"
+        if loc < low:
+            return "cold"
+        return "inside"
+    raise ValueError("Market has neither floor_strike nor cap_strike set — can't classify.")
+
+
 def fit_monthly_bias(rows: list[BacktestRow], min_samples: int = 10) -> dict[int, float]:
     """Mean residual bias per calendar month (1-12), not one flat number.
 

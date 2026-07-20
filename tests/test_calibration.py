@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from backtest.calibration import brier_score, bucket_calibration, market_benchmark
+from backtest.calibration import brier_score, bucket_calibration, fit_remaining_scale_fraction_by_brier, market_benchmark
 
 
 def test_brier_score_perfect_predictions_score_zero():
@@ -111,3 +111,23 @@ def test_market_benchmark_handles_a_perfect_market_without_dividing_by_zero():
     assert bench.brier_market == pytest.approx(0.0)
     assert bench.skill_score == 0.0
     assert bench.beats_market is False
+
+
+# --- fit_remaining_scale_fraction_by_brier ------------------------------
+
+
+def test_fit_remaining_scale_fraction_by_brier_picks_the_lowest_brier_candidate():
+    outcomes = [True, False, True, False]
+    candidates = {
+        1.0: [0.9, 0.9, 0.9, 0.9],  # bad: confidently wrong on rows 2 and 4
+        0.5: [0.7, 0.3, 0.7, 0.3],  # tracks every outcome's direction, lowest Brier
+        0.1: [0.6, 0.6, 0.6, 0.6],  # mediocre
+    }
+    best_fraction, best_brier = fit_remaining_scale_fraction_by_brier(candidates, outcomes)
+    assert best_fraction == 0.5
+    assert best_brier == pytest.approx(brier_score(candidates[0.5], outcomes))
+
+
+def test_fit_remaining_scale_fraction_by_brier_requires_at_least_one_candidate():
+    with pytest.raises(ValueError):
+        fit_remaining_scale_fraction_by_brier({}, [True, False])

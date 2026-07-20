@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from backtest.calibration import brier_score
 from backtest.harness import BacktestRow
 from scripts.run_backtest import build_backtest_detail, evaluate_city
+from weather.probability import calibrated_bracket_probability
 
 
 def _row(date: str, actual: float, spread: float) -> BacktestRow:
@@ -40,13 +43,13 @@ def _synthetic_rows() -> list[BacktestRow]:
     ]
 
 
-def test_evaluate_city_produces_all_three_variants_over_the_held_out_set():
+def test_evaluate_city_produces_all_four_variants_over_the_held_out_set():
     ev = evaluate_city("KXHIGHNY", _synthetic_rows())
 
     assert ev["city"] == "NYC"
     assert ev["series_ticker"] == "KXHIGHNY"
     assert ev["eval_rows"] > 0
-    assert set(ev["predictions"]) == {"normal", "student_t", "blended_std"}
+    assert set(ev["predictions"]) == {"shipped", "normal", "student_t", "blended_std"}
     # Every variant predicts once per eval row, aligned with outcomes.
     for preds in ev["predictions"].values():
         assert len(preds) == ev["eval_rows"]
@@ -54,6 +57,26 @@ def test_evaluate_city_produces_all_three_variants_over_the_held_out_set():
     assert len(ev["outcomes"]) == ev["eval_rows"]
     # spread_coef is clamped non-negative by fit_spread_scale.
     assert ev["fit"]["spread_coef"] >= 0.0
+
+
+def test_shipped_variant_matches_calibrated_bracket_probability_not_the_refit_normal():
+    # The whole point of the 2026-07-20 fix: "shipped" must be numerically
+    # identical to what generate_alerts.py actually calls (calibrated_
+    # bracket_probability), not a re-fit flat bias that happens to look
+    # similar. Every synthetic row shares the same forecast_mean/floor/cap,
+    # so "shipped"'s prediction is the same constant value on every eval row
+    # -- the exact value calibrated_bracket_probability computes directly
+    # for July (target_month=7), using NYC's live bias_for_month(7)
+    # (-1.46F), not any bias this script fits itself.
+    rows = _synthetic_rows()  # dated 2026-01-* -- retarget to July
+    july_rows = [replace(row, target_date=row.target_date.replace("2026-01", "2026-07")) for row in rows]
+    ev = evaluate_city("KXHIGHNY", july_rows)
+
+    expected = calibrated_bracket_probability("KXHIGHNY", 80.0, 79.0, 80.0, 7)
+    assert ev["predictions"]["shipped"] == [pytest.approx(expected)] * ev["eval_rows"]
+    # And it must differ from "normal" -- proof this isn't accidentally
+    # computing the same flat number twice under two names.
+    assert ev["predictions"]["shipped"][0] != pytest.approx(ev["predictions"]["normal"][0])
 
 
 def test_build_backtest_detail_computes_per_city_brier_and_pooled_buckets():
@@ -64,6 +87,7 @@ def test_build_backtest_detail_computes_per_city_brier_and_pooled_buckets():
         "eval_rows": 4,
         "fit": {"normal_bias": 0.0, "normal_std": 2.0, "t_df": 5.0, "t_scale": 2.0, "baseline_std": 2.0, "spread_coef": 0.0},
         "predictions": {
+            "shipped": [0.92, 0.08, 0.82, 0.18],
             "normal": [0.9, 0.1, 0.8, 0.2],
             "student_t": [0.85, 0.15, 0.75, 0.25],
             "blended_std": [0.88, 0.12, 0.78, 0.22],
@@ -73,7 +97,7 @@ def test_build_backtest_detail_computes_per_city_brier_and_pooled_buckets():
 
     detail = build_backtest_detail([ev], start_date="2024-10-01", end_date="2026-07-18")
 
-    assert detail["variants"] == ["normal", "student_t", "blended_std"]
+    assert detail["variants"] == ["shipped", "normal", "student_t", "blended_std"]
     assert detail["eval_rows_total"] == 4
     assert detail["start_date"] == "2024-10-01"
 
@@ -81,7 +105,7 @@ def test_build_backtest_detail_computes_per_city_brier_and_pooled_buckets():
     assert city["brier"]["normal"] == pytest.approx(round(brier_score(ev["predictions"]["normal"], ev["outcomes"]), 4))
 
     # Pooled reliability diagram present for each variant.
-    for key in ("normal", "student_t", "blended_std"):
+    for key in ("shipped", "normal", "student_t", "blended_std"):
         assert "brier" in detail["pooled"][key]
         assert isinstance(detail["pooled"][key]["buckets"], list)
 
@@ -109,7 +133,7 @@ def _evaluation(predictions: list[float], market_prices, outcomes: list[bool]) -
         "eval_days": len(outcomes),
         "eval_rows": len(outcomes),
         "fit": {},
-        "predictions": {key: list(predictions) for key in ("normal", "student_t", "blended_std")},
+        "predictions": {key: list(predictions) for key in ("shipped", "normal", "student_t", "blended_std")},
         "outcomes": list(outcomes),
         "market_prices": market_prices,
     }

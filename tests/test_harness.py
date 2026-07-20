@@ -5,10 +5,12 @@ import pytest
 from backtest.harness import (
     BacktestRow,
     _repair_missing_strikes,
+    classify_forecast_vs_bracket,
     collect_dated_residuals_with_spread,
     collect_residuals,
     fit_empirical_normal,
     fit_monthly_bias,
+    fit_remaining_scale_fraction,
     fit_spread_scale,
     fit_student_t,
     split_by_date,
@@ -240,6 +242,111 @@ def test_fit_spread_scale_clamps_coef_to_zero_when_disagreement_does_not_help():
 def test_fit_spread_scale_requires_at_least_three_days():
     with pytest.raises(ValueError):
         fit_spread_scale([_row("2026-01-01"), _row("2026-01-02")])
+
+
+# --- fit_remaining_scale_fraction ---------------------------------------
+
+
+def test_fit_remaining_scale_fraction_is_one_when_nothing_is_known_yet():
+    # observed_so_far == loc on every day (no information beyond the
+    # day-ahead forecast) means the remaining residual IS the day-ahead
+    # residual, unchanged — the fraction should come back at (approximately)
+    # the full day-ahead baseline, i.e. no shrinkage earned.
+    pairs = [
+        (82.0, 80.0, 80.0),  # actual=82, max(loc, observed)=80 -> residual +2
+        (78.0, 80.0, 80.0),  # residual -2
+        (81.0, 80.0, 80.0),  # residual +1
+        (79.0, 80.0, 80.0),  # residual -1
+    ]
+    # sample sd of [2, -2, 1, -1] (mean 0) = sqrt((4+4+1+1)/3) = sqrt(10/3)
+    expected = (10 / 3) ** 0.5 / 2.0
+    assert fit_remaining_scale_fraction(pairs, baseline_scale=2.0) == pytest.approx(expected)
+
+
+def test_fit_remaining_scale_fraction_shrinks_when_observation_already_explains_the_day():
+    # observed_so_far tracks the actual final almost exactly, and (the
+    # realistic afternoon case for a "max" metric) has already climbed above
+    # the day-ahead loc -- so max(loc, observed) tracks the true actual
+    # closely and the remaining residual collapses toward 0.
+    pairs = [
+        (85.0, 80.0, 84.8),
+        (89.0, 80.0, 88.9),
+        (90.0, 80.0, 89.7),
+        (86.0, 80.0, 85.8),
+    ]
+    fraction = fit_remaining_scale_fraction(pairs, baseline_scale=5.0)
+    assert fraction < 0.2
+
+
+def test_fit_remaining_scale_fraction_is_clamped_to_one():
+    # A residual spread that comes out larger than the day-ahead baseline
+    # itself (small-sample noise, or a genuinely bad baseline_scale) must not
+    # produce a fraction above 1.0 -- observation_conditioned_bracket_
+    # probability would reject it, and ">1" isn't a meaningful "more than the
+    # whole day is still uncertain" claim anyway.
+    pairs = [(90.0, 80.0, 80.0), (70.0, 80.0, 80.0)]
+    assert fit_remaining_scale_fraction(pairs, baseline_scale=1.0) == 1.0
+
+
+def test_fit_remaining_scale_fraction_is_floored_above_zero():
+    # Every day nailed exactly -- a zero residual spread must still clamp to
+    # a small positive floor, not 0.0 itself, which the callee rejects.
+    pairs = [(80.0, 80.0, 80.0), (80.0, 80.0, 80.0), (80.0, 80.0, 80.0)]
+    assert fit_remaining_scale_fraction(pairs, baseline_scale=2.0) == pytest.approx(0.01)
+
+
+def test_fit_remaining_scale_fraction_requires_at_least_two_days():
+    with pytest.raises(ValueError):
+        fit_remaining_scale_fraction([(80.0, 80.0, 80.0)], baseline_scale=2.0)
+
+
+def test_fit_remaining_scale_fraction_requires_a_positive_baseline():
+    with pytest.raises(ValueError):
+        fit_remaining_scale_fraction([(80.0, 80.0, 80.0), (81.0, 80.0, 80.0)], baseline_scale=0.0)
+
+
+# --- classify_forecast_vs_bracket ----------------------------------------
+
+
+def test_classify_between_bracket_hot():
+    # Winning bracket is 79-80 (true range 78.5-80.5); loc=83 predicted well
+    # above it -- the forecast ran hot relative to what actually happened.
+    assert classify_forecast_vs_bracket(83.0, 79.0, 80.0) == "hot"
+
+
+def test_classify_between_bracket_cold():
+    assert classify_forecast_vs_bracket(75.0, 79.0, 80.0) == "cold"
+
+
+def test_classify_between_bracket_inside():
+    assert classify_forecast_vs_bracket(79.7, 79.0, 80.0) == "inside"
+
+
+def test_classify_lowest_tail_bracket_only_ever_hot_or_inside():
+    # "< 79" (the ladder's lowest bracket) won -- there's no lower bound to
+    # undershoot, so a low loc is just "inside", never "cold".
+    assert classify_forecast_vs_bracket(90.0, None, 79.0) == "hot"
+    assert classify_forecast_vs_bracket(60.0, None, 79.0) == "inside"
+
+
+def test_classify_highest_tail_bracket_only_ever_cold_or_inside():
+    # "> 86" (the ladder's highest bracket) won -- there's no upper bound to
+    # overshoot, so a high loc is just "inside", never "hot".
+    assert classify_forecast_vs_bracket(70.0, 86.0, None) == "cold"
+    assert classify_forecast_vs_bracket(95.0, 86.0, None) == "inside"
+
+
+def test_classify_uses_the_half_degree_continuity_boundary():
+    # loc landing exactly on cap_strike (80.0) is still "inside" -- the true
+    # boundary is cap+0.5 (80.5), matching bracket_probability's own
+    # convention, not the raw strike value.
+    assert classify_forecast_vs_bracket(80.0, 79.0, 80.0) == "inside"
+    assert classify_forecast_vs_bracket(80.6, 79.0, 80.0) == "hot"
+
+
+def test_classify_rejects_a_market_with_neither_strike():
+    with pytest.raises(ValueError):
+        classify_forecast_vs_bracket(80.0, None, None)
 
 
 # _repair_missing_strikes — modeled directly on real broken ladders found live

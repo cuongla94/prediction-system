@@ -30,6 +30,46 @@ def brier_score(predictions: list[float], outcomes: list[bool]) -> float:
     ) / len(predictions)
 
 
+def fit_remaining_scale_fraction_by_brier(
+    candidate_predictions: dict[float, list[float]],
+    outcomes: list[bool],
+) -> tuple[float, float]:
+    """Pick whichever candidate `remaining_scale_fraction` minimizes Brier
+    score against real settled outcomes — a direct calibration-based fit for
+    weather.probability.observation_conditioned_bracket_probability's
+    shrinkage knob, built 2026-07-20 after backtest.harness.
+    fit_remaining_scale_fraction (a point-value-residual approach) only had
+    enough data to fit on 7 of an 18-day same-day proof window's days, and
+    those 7 turned out to share a confound (the day-ahead forecast ran hot
+    enough that the observation never caught up to it, on every one of
+    them) that made it structurally blind either way. This works on every
+    settled bracket-row instead, tail-bracket wins included — it only needs
+    the same (predicted probability, actual outcome) pairs brier_score
+    already scores, not a reconstructed point value for the day's actual
+    extreme.
+
+    `candidate_predictions` is `{fraction: predictions}` — one full list of
+    per-row predicted-YES probabilities per candidate fraction, all in the
+    same row order as `outcomes`. Generating those predictions is the
+    caller's job (it needs weather.probability.
+    observation_conditioned_bracket_probability plus each row's own
+    loc/scale/floor/cap/observed-so-far, none of which this module
+    otherwise depends on); this function only scores and picks among
+    whatever candidates it's handed.
+
+    Returns `(best_fraction, that fraction's Brier score)`. Fit and scored
+    on the same rows by construction (there's no separate held-out split
+    here) — read as "does shrinkage help on this data," not a validated
+    production parameter, same caveat fit_remaining_scale_fraction's
+    docstring already carries.
+    """
+    if not candidate_predictions:
+        raise ValueError("Need at least one candidate fraction to choose from.")
+    scored = {fraction: brier_score(predictions, outcomes) for fraction, predictions in candidate_predictions.items()}
+    best_fraction = min(scored, key=lambda f: scored[f])
+    return best_fraction, scored[best_fraction]
+
+
 @dataclass(frozen=True)
 class MarketBenchmark:
     n: int

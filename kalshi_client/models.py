@@ -144,6 +144,31 @@ class Market:
 
 
 @dataclass(frozen=True)
+class Candlestick:
+    """One period's yes-bid/yes-ask close from GET .../candlesticks — an
+    intraday price snapshot, unlike Market's single "current" quote.
+    `end_period_ts` is the bucket's closing Unix timestamp (UTC); the bucket
+    covering a given instant is the one whose `end_period_ts` is the smallest
+    value >= that instant, at the requested `period_interval`. Close prices
+    only — no open/high/low/volume — since same-day backtesting (the only
+    current caller) needs "what could you have traded at, as of this
+    moment," not the full candle.
+    """
+
+    end_period_ts: int
+    yes_bid_close_dollars: float | None
+    yes_ask_close_dollars: float | None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Candlestick":
+        return cls(
+            end_period_ts=data["end_period_ts"],
+            yes_bid_close_dollars=_float_or_none(data.get("yes_bid") or {}, "close_dollars"),
+            yes_ask_close_dollars=_float_or_none(data.get("yes_ask") or {}, "close_dollars"),
+        )
+
+
+@dataclass(frozen=True)
 class Position:
     """One market's real position on the user's actual Kalshi account —
     from GET /portfolio/positions (authenticated, real holdings, not a
