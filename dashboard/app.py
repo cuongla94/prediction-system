@@ -384,7 +384,9 @@ _CADENCE = {
     "send_notifications": "~6h",
     "mark_settled_alerts": "15m",
     "run_paper_trading": "15m",
-    "fit_calibration_params": "weekly",
+    # A duration, not the word "weekly" — the template renders this as
+    # "Expected every {x}", so a bare adverb produced "Expected every weekly".
+    "fit_calibration_params": "7d",
 }
 
 
