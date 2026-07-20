@@ -217,13 +217,26 @@ def test_decision_log_flags_when_decided_markers_vanish(tmp_path):
     doc.write_text("# notes\n\nnothing decided here\n")
     finding = check_decision_log(doc)
     assert finding.status is Status.FLAG
-    assert len(finding.evidence) >= 3
+    assert len(finding.evidence) >= 3  # 3 missing markers + the file line
 
 
 def test_decision_log_passes_when_markers_present(tmp_path):
     doc = tmp_path / "followups.md"
-    doc.write_text("## DECIDED\n- TLS: RISK ACCEPTED, 2026-07-20\n- Login rate limiting: SKIPPED\n")
+    doc.write_text(
+        "- TLS: RISK ACCEPTED, 2026-07-20\n"
+        "- Login rate limiting: SKIPPED\n"
+        "- Trading-mechanics work: PAUSED\n"
+    )
     assert check_decision_log(doc).status is Status.PASS
+
+
+def test_decision_log_checks_the_real_repo_file():
+    # The shipped DECISIONS.md must actually satisfy the check it is written
+    # for -- otherwise the audit flags on every run from day one.
+    from pathlib import Path
+
+    repo_decisions = Path(__file__).resolve().parent.parent / "DECISIONS.md"
+    assert check_decision_log(repo_decisions).status is Status.PASS
 
 
 def test_decision_log_missing_file_is_unknown(tmp_path):

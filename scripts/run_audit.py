@@ -47,13 +47,12 @@ from audit.checks_security import (  # noqa: E402
 )
 from audit.report import Finding, Status, render_report  # noqa: E402
 
-MEMORY_PATH = Path(
-    os.environ.get(
-        "AUDIT_MEMORY_PATH",
-        Path.home() / ".claude/projects/-Users-cuongla-Projects-cuong-projects-kalshi-prediction-market"
-        "/memory/kalshi_open_followups.md",
-    )
-)
+# DECISIONS.md lives in the repo, not in a local memory directory, specifically
+# so this check works on the droplet too. Pointed at a laptop-only path it would
+# report UNKNOWN every single week on the production host — and a permanent
+# UNKNOWN is worse than no check, because it trains you to ignore the section
+# it appears in.
+DECISIONS_PATH = Path(os.environ.get("AUDIT_DECISIONS_PATH", REPO_ROOT / "DECISIONS.md"))
 
 
 def _guard(category: str, name: str, fn, *args, **kwargs) -> Finding:
@@ -146,7 +145,7 @@ def collect_findings() -> list[Finding]:
     findings.append(_guard("Deploy/infra", "Disk & memory headroom", check_disk_and_memory))
     findings.append(_guard("Deploy/infra", "Deploy state", check_deploy_state, REPO_ROOT))
     findings.append(_guard("Deploy/infra", "Last deploy run", check_last_deploy_run))
-    findings.append(_guard("Decision log", "DECIDED items intact", check_decision_log, MEMORY_PATH))
+    findings.append(_guard("Decision log", "DECIDED items intact", check_decision_log, DECISIONS_PATH))
     return findings
 
 

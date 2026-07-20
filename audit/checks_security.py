@@ -395,10 +395,13 @@ def check_decision_log(memory_path: Path) -> Finding:
             f"Could not read {memory_path} ({exc.__class__.__name__}).",
         )
 
+    # The specific decisions, not a heading style. Checking for a generic
+    # "DECIDED" banner would pass on a file that had lost every actual decision
+    # under it, which is the failure this is meant to catch.
     required = {
-        "DECIDED heading": "DECIDED",
         "TLS acceptance": "TLS: RISK ACCEPTED",
         "rate-limit decision": "rate limiting: SKIPPED",
+        "trading-mechanics pause": "Trading-mechanics work: PAUSED",
     }
     missing = [name for name, needle in required.items() if needle.lower() not in text.lower()]
     evidence = [f"{memory_path} — {len(text.splitlines())} lines"]
