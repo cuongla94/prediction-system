@@ -96,6 +96,31 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Preflight. A missing or misnamed secret resolves to an empty string
+          # rather than erroring, which otherwise surfaces much later as an
+          # inscrutable "Load key: invalid format" or "Could not resolve
+          # hostname" -- and if DEPLOY_HOST is the empty one, ssh silently
+          # treats the SHA argument as the hostname. Fail here with the actual
+          # cause instead.
+          #
+          # Only presence and length are reported, never any value. GitHub
+          # masks secrets in logs, but not echoing them at all is the habit
+          # worth keeping on a public repository.
+          missing=0
+          for name in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_HOST; do
+            eval "value=\${$name:-}"
+            if [ -z "$value" ]; then
+              echo "MISSING: repository secret '$name' is empty or not set" >&2
+              missing=1
+            else
+              echo "  $name: present (${#value} chars)"
+            fi
+          done
+          [ "$missing" -eq 0 ] || {
+            echo "Add the missing secret(s) under Settings > Secrets and variables > Actions." >&2
+            exit 1
+          }
+
           # umask before creating anything, so the private key is never even
           # briefly group/world-readable.
           umask 077
@@ -106,6 +131,19 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY"     > ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+          # Validate the key actually parses, and show which key it is. Deriving
+          # the PUBLIC key from the private one is safe to print and is the
+          # fastest way to tell "wrong key pasted" from "key is fine but the
+          # droplet rejected it" -- compare this fingerprint against the entry
+          # in the droplet's /root/.ssh/authorized_keys.
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null 2>&1; then
+            echo "DEPLOY_SSH_KEY did not parse as a private key." >&2
+            echo "  Paste the whole file including the BEGIN/END lines." >&2
+            exit 1
+          fi
+          echo "  deploy key fingerprint: $(ssh-keygen -y -f ~/.ssh/deploy_key | ssh-keygen -lf -)"
+          echo "  known_hosts entries: $(grep -vc '^#' ~/.ssh/known_hosts || true)"
 
           # The host key is pinned from a secret rather than discovered with
           # ssh-keyscan at runtime — keyscan-then-trust would accept whatever
