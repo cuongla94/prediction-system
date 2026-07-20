@@ -44,7 +44,25 @@ app = Flask(__name__)
 # real cost of no FLASK_SECRET_KEY in .env is just that every process restart
 # invalidates existing sessions, not a security hole.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
-app.permanent_session_lifetime = timedelta(days=3)
+# Sessions expire after 5 days of INACTIVITY, not 5 days absolute: Flask's
+# SESSION_REFRESH_EACH_REQUEST (on by default for permanent sessions) re-issues
+# the cookie on every request, so the window slides forward while the dashboard
+# is actually being used. Checking in even once every few days never logs you
+# out; walking away for most of a week does.
+#
+# Enforced on BOTH sides, which is the part that matters — the cookie carries an
+# Expires so the browser drops it, and Flask independently passes this as
+# max_age when unsealing, so a cookie replayed past its lifetime (copied off a
+# machine, restored from a backup) is rejected server-side rather than trusted.
+# Verified by replaying forged cookies at 1 / 2.9 / 3.1 / 10 days against the
+# previous 3-day setting: the first two authenticated, the last two did not.
+#
+# 5 days is a judgement call inside the 3-7 day band: long enough not to nag a
+# near-daily user, short enough that a session forgotten on a borrowed or lost
+# device does not stay valid for weeks. Deliberately NOT a substitute for
+# brute-force rate limiting on the login form, which is skipped separately
+# because nginx basic auth already fronts it.
+app.permanent_session_lifetime = timedelta(days=5)
 # Lax, not None: the session cookie shouldn't ride along on cross-site requests.
 # There are no state-changing trading actions exposed here (this dashboard is
 # read-only over Kalshi), so the CSRF surface is small — /logout is the only
@@ -450,6 +468,20 @@ def status():
         script: (now - (run.finished_at or run.started_at)) > _STALE_AFTER.get(script, _DEFAULT_STALE_AFTER)
         for script, run in latest.items()
     }
+    # Runs stuck in 'running' long past any plausible duration. This is a
+    # genuinely different failure from staleness, and neither the staleness
+    # flags above nor the healthchecks.io dead-man's-switch covers it:
+    #
+    # - staleness asks "has a NEW run started recently", so a later run
+    #   succeeding hides an earlier one that never finished;
+    # - the dead-man's-switch only watches the cron wrappers, so a script run
+    #   by hand and interrupted is invisible to it.
+    #
+    # That is exactly what happened to generate_alerts id=20 (started
+    # 2026-07-19 01:42 UTC off-cron, killed mid-run before track_run could
+    # write finished_at) and it sat unnoticed for two days while every
+    # scheduled run around it succeeded. This surfaces that case directly.
+    stuck = _stuck_runs()
 
     def _label(delta: timedelta) -> str:
         # Days matter now that the weekly recalibration job is tracked here —
@@ -470,6 +502,8 @@ def status():
         stale=stale,
         stale_after={script: _label(_STALE_AFTER.get(script, _DEFAULT_STALE_AFTER)) for script in _KNOWN_SCRIPTS},
         cadence=_CADENCE,
+        stuck=stuck,
+        stuck_after=_label(_STUCK_AFTER),
     )
 
 
@@ -487,6 +521,42 @@ class CalibrationRow:
     fit_days: int
     flat_brier: float | None
     monthly_brier: float | None
+
+
+# Longer than any real run. The heaviest job here (the weekly recalibration,
+# walking ~2 years of settled markets across 40 series on one vCPU) finishes
+# well inside this even on a cold cache, so anything still 'running' past it
+# did not finish -- it died without track_run's exit handler getting to write
+# a status.
+_STUCK_AFTER = timedelta(hours=3)
+
+
+def _stuck_runs() -> list[PipelineRun]:
+    """Runs left in 'running' long enough that they must have died.
+
+    Deliberately not folded into `_pipeline_status`, which returns only the
+    latest run per script: a stuck run is usually NOT the latest one (a later
+    scheduled run succeeds on top of it), so it is invisible to any
+    latest-row-per-script view. That is precisely how a two-day-old zombie went
+    unnoticed while /status showed everything green.
+    """
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        return []
+
+    import psycopg
+
+    try:
+        with psycopg.connect(database_url, connect_timeout=5) as conn, conn.cursor() as cur:
+            cur.execute(
+                "select script, started_at, finished_at, status, summary, detail "
+                "from pipeline_runs where status = 'running' and started_at < %s "
+                "order by started_at",
+                (datetime.now(UTC) - _STUCK_AFTER,),
+            )
+            return [PipelineRun(*row) for row in cur.fetchall()]
+    except psycopg.OperationalError:
+        return []
 
 
 def _calibration_runs() -> list[tuple]:
