@@ -21,6 +21,74 @@
     {% else %}
 
     <div class="section-head">
+      <h4>Is the gap to the market closing?</h4>
+      <span class="section-head-rule"></span>
+    </div>
+    <p class="section-note">
+      Trading-mechanics work is <strong>paused</strong> as of 2026-07-20 — three independent tests
+      (live prices, full backtest, same-day proof) agreed the model has no edge over Kalshi's own
+      prices, and no amount of sizing or exit logic can manufacture one. This panel is the standing
+      answer to “has anything changed?”, so that question gets settled from accumulated evidence
+      rather than a fresh manual audit each time.
+      <br /><br />
+      <strong>Skill</strong> is the number that matters, not Brier. The model was already reasonably
+      calibrated against outcomes while losing badly to the market, so Brier alone could improve for
+      months without anything becoming tradeable. Positive skill = beat the market on held-out rows;
+      0 = merely reproduced the price; negative = trading it is worse than not.
+    </p>
+    {% if not trend.points %}
+    <p class="empty">No comparable recalibration runs recorded yet. The weekly fit populates this.</p>
+    {% else %}
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>When</th><th>Series</th><th class="num">Model Brier</th><th class="num">Market Brier</th><th class="num">Skill vs market</th><th class="num">Change</th></tr>
+        </thead>
+        <tbody>
+          {% set pts = trend.points %}
+          {% for p in pts %}
+          <tr>
+            <td class="tnum">{{ p.started_at|pacific('%b %-d, %Y') }}</td>
+            <td class="tnum">{{ p.series_count }}</td>
+            <td class="num tnum">{{ "%.4f"|format(p.brier_model) if p.brier_model is not none else "—" }}</td>
+            <td class="num tnum">{{ "%.4f"|format(p.brier_market) if p.brier_market is not none else "—" }}</td>
+            <td class="num tnum">{{ "%+.4f"|format(p.skill_vs_market) if p.has_market else "n/a" }}</td>
+            <td class="num tnum">
+              {%- if loop.index0 > 0 and p.has_market and pts[loop.index0 - 1].has_market -%}
+                {% set d = p.skill_vs_market - pts[loop.index0 - 1].skill_vs_market %}
+                <span class="{{ 'gain' if d > 0 else 'loss' if d < 0 else '' }}">{{ "%+.4f"|format(d) }}</span>
+              {%- else -%}—{%- endif -%}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="section-note" style="margin-bottom:28px">
+      {% if trend.latest is none %}
+        No run yet carries a market benchmark — runs before 2026-07-20 recorded Brier against
+        outcomes only. The next weekly fit records one.
+      {% else %}
+        Latest skill <strong>{{ "%+.4f"|format(trend.latest.skill_vs_market) }}</strong>
+        (n={{ trend.latest.n_market_rows }}).
+        {% if trend.skill_delta is not none %}
+          Week-over-week <strong>{{ "%+.4f"|format(trend.skill_delta) }}</strong>
+          ({{ "toward" if trend.skill_delta > 0 else "away from" }} tradeable).
+        {% else %}
+          Only one comparable run so far — no movement to report yet.
+        {% endif %}
+        Consecutive improving runs: <strong>{{ trend.improving_streak }}</strong>.
+        <br /><br />
+        <strong>Revisit trigger:</strong> skill turning positive for any series (strong — re-run
+        <code>scripts/run_backtest.py</code> and confirm the gate reports TRADEABLE), or
+        {{ revisit_streak }} consecutive improving runs (weak — investigate the forecasting core, not
+        a reason to resume trading work on its own). Neither met = the pause stands.
+      {% endif %}
+    </p>
+
+    {% endif %}
+
+    <div class="section-head">
       <h4>Current calibration, per city</h4>
       <span class="section-head-rule"></span>
     </div>

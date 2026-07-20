@@ -25,10 +25,10 @@ from datetime import date, timedelta
 from dotenv import load_dotenv
 
 from backtest.cache import cached_collect_rows
-from backtest.calibration import brier_score
+from backtest.calibration import brier_score, market_benchmark
 from backtest.harness import fit_empirical_normal, fit_monthly_bias, split_by_date
 from kalshi_client import KalshiClient
-from monitoring import track_run
+from monitoring import pooled_market_benchmark, track_run
 from weather.calibration_override import clear_cache, write_override
 from weather.calibration_params import CalibrationParams
 from weather.probability import bracket_probability
@@ -143,9 +143,29 @@ def fit_for_city(client: KalshiClient, series_ticker: str) -> dict:
     monthly_brier = brier_score(monthly_preds, outcomes)
     use_monthly = monthly_brier < flat_brier
 
+    # Score whichever variant was actually adopted against the market's own
+    # price on the same held-out rows.
+    #
+    # This is the number that answers "is the weekly re-fit closing the gap",
+    # and nothing was recording it before 2026-07-20: flat_brier/monthly_brier
+    # measure the model against *outcomes*, which is calibration, not edge. The
+    # model was already roughly calibrated while losing decisively to the market
+    # (see kalshi-no-edge-root-cause memory) — so a Brier-only trend could drift
+    # downward for a year while the thing that decides tradeability never moved.
+    # The rows are already loaded here and carry last_price, so this costs
+    # nothing extra; the alternative was scheduling run_backtest.py separately.
+    adopted_preds = monthly_preds if use_monthly else flat_preds
+    bench = market_benchmark(adopted_preds, [row.last_price for row in eval_rows], outcomes)
+
+    market_note = (
+        f"  vs market: model={bench.brier_model:.4f} market={bench.brier_market:.4f} "
+        f"skill={bench.skill_score:+.3f} (n={bench.n})"
+        if bench
+        else "  vs market: no prices on eval rows"
+    )
     print(
         f"  {STATIONS[series_ticker].city:14s} flat={flat_brier:.4f}  monthly={monthly_brier:.4f}"
-        f"  -> using {'monthly' if use_monthly else 'flat'}"
+        f"  -> using {'monthly' if use_monthly else 'flat'}\n{market_note}"
     )
 
     return dict(
@@ -157,6 +177,17 @@ def fit_for_city(client: KalshiClient, series_ticker: str) -> dict:
         flat_brier=round(flat_brier, 4),
         monthly_brier=round(monthly_brier, 4),
         use_monthly=use_monthly,
+        # The adopted variant's own Brier, stored explicitly rather than left
+        # to be re-derived from use_monthly — a trend reader shouldn't have to
+        # reimplement the selection rule to know what actually shipped.
+        adopted_brier=round(monthly_brier if use_monthly else flat_brier, 4),
+        # Market benchmark on the same held-out rows. n_market_rows is what
+        # makes pooling across cities exact: Brier is a mean, so a weighted
+        # mean by row count reconstructs the pooled figure without storing
+        # every prediction. None when no eval row carried a price.
+        market_brier=round(bench.brier_market, 4) if bench else None,
+        skill_vs_market=round(bench.skill_score, 4) if bench else None,
+        n_market_rows=bench.n if bench else 0,
     )
 
 
@@ -228,7 +259,22 @@ def main() -> None:
         # alone can't distinguish the two rows a single city produces here —
         # a city-only key silently let one metric's Brier scores overwrite
         # the other's on dashboard/app.py's read side.
-        run.summary = f"Fit {len(results)} cities from {START_DATE} to {END_DATE}"
+        # Deliberately still a JSON *list* of per-series rows, not a dict with a
+        # nested "pooled" block: four historical runs are already stored in this
+        # shape, and monitoring/trend.py reads them all to build a week-over-week
+        # trend. Adding keys is backward compatible (older rows simply lack the
+        # market fields and are reported as unavailable); restructuring would
+        # have silently truncated the trend to only post-change runs.
+        pooled = pooled_market_benchmark(results)
+        run.summary = (
+            f"Fit {len(results)} cities from {START_DATE} to {END_DATE}. "
+            + (
+                f"Pooled vs market: model={pooled['brier_model']} market={pooled['brier_market']} "
+                f"skill={pooled['skill_vs_market']:+.4f}"
+                if pooled
+                else "Pooled vs market: unavailable (no prices on eval rows)"
+            )
+        )
         run.detail = json.dumps(
             [
                 {
@@ -238,6 +284,10 @@ def main() -> None:
                     "monthly_brier": r["monthly_brier"],
                     "using": "monthly" if r["use_monthly"] else "flat",
                     "fit_days": r["fit_days"],
+                    "adopted_brier": r["adopted_brier"],
+                    "market_brier": r["market_brier"],
+                    "skill_vs_market": r["skill_vs_market"],
+                    "n_market_rows": r["n_market_rows"],
                 }
                 for r in results
             ]

@@ -23,6 +23,8 @@ from sizing.kelly import (
     max_event_exposure_setting,
     size_event,
 )
+from monitoring import comparable_trend, summarize
+from monitoring.trend import REVISIT_STREAK
 from weather.calibration_override import load_override, override_metadata
 from weather.calibration_params import CALIBRATION, get_calibration
 from weather.nws_observations import fetch_today_extreme
@@ -461,6 +463,33 @@ class CalibrationRow:
     monthly_brier: float | None
 
 
+def _calibration_runs() -> list[tuple]:
+    """Every recorded recalibration run, for the week-over-week trend.
+
+    Deliberately a separate query from `_pipeline_status`, which returns only
+    the latest run per script — a trend needs the whole history, and the point
+    of this panel is that "is the gap closing?" gets answered from accumulated
+    evidence rather than a fresh manual audit. Returns [] on any DB trouble,
+    matching this page's degrade-don't-500 behaviour.
+    """
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        return []
+
+    import psycopg
+
+    try:
+        with psycopg.connect(database_url, connect_timeout=5) as conn, conn.cursor() as cur:
+            cur.execute(
+                "select id, started_at, detail from pipeline_runs "
+                "where script = 'fit_calibration_params' and status in ('success', 'partial') "
+                "order by started_at"
+            )
+            return cur.fetchall()
+    except psycopg.OperationalError:
+        return []
+
+
 def _parse_json_detail(run: PipelineRun | None) -> list | None:
     """fit_calibration_params/validate_against_noaa store their per-city
     results as a JSON list in pipeline_runs.detail (see those scripts) rather
@@ -540,6 +569,7 @@ def backtest():
     # every script that has ever run, including this one.
     backtest_run = latest.get("run_backtest")
     reliability = _parse_json_detail(backtest_run)
+    trend = summarize(comparable_trend(_calibration_runs()))
     # Which series' live params differ from the committed baseline, so the page
     # can say so explicitly rather than leaving the divergence invisible.
     override = load_override()
@@ -560,6 +590,8 @@ def backtest():
         reliability=reliability if isinstance(reliability, dict) else None,
         override_meta=override_metadata(),
         override_diff=override_diff,
+        trend=trend,
+        revisit_streak=REVISIT_STREAK,
     )
 
 
