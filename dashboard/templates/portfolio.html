@@ -92,13 +92,6 @@
 
   {% include "_footer.html" %}
 
-  <script>
-    // Full-page reload, same reasoning as paper_trading.html's — keeps this
-    // in sync with the exact same server-rendered numbers a manual refresh
-    // would show, rather than a separate client-side fetch path that could
-    // drift from it. No dialogs on this page, so no need to wait for one to
-    // close first.
-    setTimeout(function () { location.reload(); }, 30000);
-  </script>
+  {% include "_live_refresh.html" %}
 </body>
 </html>

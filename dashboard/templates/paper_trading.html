@@ -125,7 +125,13 @@
     {% else %}
     <div style="margin-bottom:40px">
     {% for group in open_city_groups %}
-    <details class="ladder-toggle ladder-toggle--standalone">
+    {# data-live-key: a STABLE identity for this row across live refreshes.
+       _live_refresh.html re-opens whichever groups were expanded, and it
+       cannot key off the summary text — that contains the countdown (rewritten
+       every second by the ticker) and a live P&L figure, so the on-screen text
+       never matches the freshly-fetched server text and every group would
+       silently collapse on each refresh. City is stable and unique per row. #}
+    <details class="ladder-toggle ladder-toggle--standalone" data-live-key="open-{{ group.city }}">
       <summary class="summary-with-link">
         <span>
           <span class="chevron">▸</span>
@@ -237,26 +243,40 @@
   {% include "_footer.html" %}
 
   <script>
-    document.querySelectorAll('dialog.details-modal').forEach(function (dialog) {
-      dialog.addEventListener('click', function (event) {
-        if (event.target === dialog) dialog.close();
+    // Re-runnable on purpose: _live_refresh.html swaps <main>, which detaches
+    // every dialog these listeners were bound to. It fires `live-refresh`
+    // afterwards so this runs again against the new nodes — without it, the
+    // modals would still open (that is an inline onclick, part of the swapped
+    // markup) but backdrop-click-to-close and the scroll-lock reset would
+    // silently stop working after the first refresh.
+    function bindDetailsModals() {
+      document.querySelectorAll('dialog.details-modal').forEach(function (dialog) {
+        dialog.addEventListener('click', function (event) {
+          if (event.target === dialog) dialog.close();
+        });
+        // Restore background scrolling however the dialog closed (X button,
+        // Escape key, backdrop click) — the native `close` event covers all
+        // three paths, so this doesn't need to be duplicated per close handler.
+        dialog.addEventListener('close', function () {
+          document.body.style.overflow = '';
+        });
       });
-      // Restore background scrolling however the dialog closed (X button,
-      // Escape key, backdrop click) — the native `close` event covers all
-      // three paths, so this doesn't need to be duplicated per close handler.
-      dialog.addEventListener('close', function () {
-        document.body.style.overflow = '';
-      });
-    });
+    }
+    bindDetailsModals();
+    document.addEventListener('live-refresh', bindDetailsModals);
 
     (function () {
       // Same live countdown as index.html's event cards — ticks every
       // second, turns urgent under 1h remaining. No status-badge sibling to
       // sync here (that part of index.html's version doesn't apply), so
       // this is otherwise identical.
-      var countdowns = document.querySelectorAll('.countdown[data-close-time]');
-      if (!countdowns.length) return;
-
+      //
+      // The element list is re-queried inside tick() rather than cached once,
+      // because _live_refresh.html replaces the contents of <main> every 30s.
+      // A cached NodeList would keep pointing at detached nodes and the
+      // visible countdowns would silently freeze after the first refresh —
+      // and freeze showing a *stale* time, which is worse than showing none.
+      // Re-querying a handful of elements once a second is free.
       function formatRemaining(ms) {
         if (ms <= 0) return 'Trading closed';
         var totalSeconds = Math.floor(ms / 1000);
@@ -271,7 +291,7 @@
 
       function tick() {
         var now = Date.now();
-        countdowns.forEach(function (el) {
+        document.querySelectorAll('.countdown[data-close-time]').forEach(function (el) {
           var remaining = new Date(el.dataset.closeTime).getTime() - now;
           el.textContent = formatRemaining(remaining);
           el.classList.toggle('urgent', remaining > 0 && remaining < 3600000);
@@ -282,22 +302,8 @@
       tick();
       setInterval(tick, 1000);
     })();
-
-    (function () {
-      // Full-page reload rather than a partial fetch/patch — simplest way to
-      // keep this genuinely in sync with the same server-rendered numbers a
-      // manual refresh would show, not a separate client-side code path that
-      // could drift from it. Waits for any open trade-history modal to close
-      // first so a reload doesn't yank it away mid-read.
-      var REFRESH_MS = 30000;
-      var CHECK_MS = 3000;
-      var dueAt = Date.now() + REFRESH_MS;
-      setInterval(function () {
-        if (Date.now() < dueAt) return;
-        if (document.querySelector('dialog[open]')) return;
-        location.reload();
-      }, CHECK_MS);
-    })();
   </script>
+
+  {% include "_live_refresh.html" %}
 </body>
 </html>

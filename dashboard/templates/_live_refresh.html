@@ -1,0 +1,90 @@
+<script>
+  // In-place live refresh, replacing the full-page location.reload() these
+  // pages used until 2026-07-20.
+  //
+  // The reload was real and did work — the "refreshes itself every 30s" copy
+  // was accurate, not aspirational — but it reset scroll to the top, collapsed
+  // every expanded city/date group, and threw away the page mid-read. On a
+  // dashboard you leave open and glance at, that is worse than not refreshing.
+  //
+  // This re-fetches THE SAME URL and swaps <main>, rather than fetching JSON
+  // and re-rendering client-side. That is deliberate and preserves the property
+  // the old comments were protecting: there is still exactly one rendering path
+  // (server-side Jinja), so the auto-refreshed view cannot drift from what a
+  // manual reload would show. The cost is transferring a whole page each time,
+  // which at this size and a 30s cadence is irrelevant.
+  //
+  // Swapping innerHTML detaches every node inside <main>, so anything holding
+  // references into it (a cached NodeList) or bound with addEventListener is
+  // lost. Rather than have this partial know about each page's widgets, it
+  // fires a `live-refresh` event afterwards and pages re-run their own init.
+  // Inline onclick attributes survive the swap on their own, since they are
+  // part of the markup being replaced.
+  (function () {
+    var INTERVAL_MS = 30000;
+    var main = document.querySelector('main');
+    if (!main || !window.fetch || !window.DOMParser) return;
+
+    // Identify a <details> by an explicit server-rendered data-live-key.
+    //
+    // Summary text is NOT usable as the key, which is worth stating because it
+    // is the obvious first choice and it silently fails: these summaries embed
+    // a countdown that the 1s ticker rewrites in place ("closes Jul 21, 22:00
+    // PDT" becomes "Closes in 1d 6h") plus a live P&L figure. The on-screen
+    // text therefore never matches the freshly-fetched server text, every
+    // lookup misses, and each refresh collapses every expanded group — which
+    // looks exactly like "the refresh is broken" rather than a key bug.
+    // Verified in a real browser before switching to this attribute.
+    function key(details) {
+      return details.getAttribute('data-live-key') || '';
+    }
+
+    function openKeys(root) {
+      return Array.prototype.map.call(root.querySelectorAll('details[open]'), key).filter(Boolean);
+    }
+
+    function reopen(root, keys) {
+      if (!keys.length) return;
+      Array.prototype.forEach.call(root.querySelectorAll('details'), function (details) {
+        if (keys.indexOf(key(details)) !== -1) details.open = true;
+      });
+    }
+
+    function refresh() {
+      // Never swap while a modal is open — it would be torn out from under
+      // whoever is reading it. Checked again after the fetch resolves, since
+      // one can be opened during the round trip.
+      if (document.querySelector('dialog[open]')) return;
+
+      fetch(location.href, { credentials: 'same-origin', headers: { 'X-Live-Refresh': '1' } })
+        .then(function (response) {
+          // A 302 to /login means the session expired. Following it would
+          // silently paint the login form into <main>; reload instead so the
+          // browser lands on the real login page.
+          if (response.redirected) { location.reload(); return null; }
+          return response.ok ? response.text() : null;
+        })
+        .then(function (html) {
+          if (!html || document.querySelector('dialog[open]')) return;
+          var fresh = new DOMParser().parseFromString(html, 'text/html').querySelector('main');
+          if (!fresh) return;
+
+          var wasOpen = openKeys(main);
+          var scrollY = window.scrollY;
+          main.innerHTML = fresh.innerHTML;
+          reopen(main, wasOpen);
+          // innerHTML assignment can shorten the page enough to clamp scroll;
+          // restore explicitly so a refresh is visually inert.
+          window.scrollTo(0, scrollY);
+
+          document.dispatchEvent(new CustomEvent('live-refresh'));
+        })
+        .catch(function () {
+          // Offline, or the server blipped. Skip this tick rather than
+          // surfacing an error — the next one retries in 30s.
+        });
+    }
+
+    setInterval(refresh, INTERVAL_MS);
+  })();
+</script>
