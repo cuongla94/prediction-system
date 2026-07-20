@@ -41,3 +41,7 @@ logs/*.log
 # Test/tooling
 .pytest_cache/
 .ruff_cache/
+
+# Audit reports (scripts/run_audit.py). Generated artefacts, and they name
+# internal paths, IPs and access patterns — not for a public repo.
+logs/audit/

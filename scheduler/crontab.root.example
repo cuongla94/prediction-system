@@ -1,0 +1,25 @@
+# ROOT's crontab — deliberately separate from scheduler/crontab.example.
+#
+# Kept apart for a concrete reason, not tidiness: deploy/remote_deploy.sh
+# installs crontab.example into the KALSHI user's crontab on every deploy
+# (`crontab -u kalshi`). Putting the audit line there would therefore schedule
+# it as kalshi, where several of its checks are structurally blind after the
+# 2026-07-20 hardening — /var/log/nginx/access.log and /etc/nginx/.htpasswd are
+# unreadable to that account, and .git is root:root 0700. Those checks would
+# silently report UNKNOWN forever while looking scheduled and healthy.
+#
+# Nothing installs this file automatically. That is intentional: an automated
+# deploy should not be able to grant itself root cron entries. Install it by
+# hand, once:
+#
+#   sed "s|/path/to/kalshi-prediction-market|/opt/kalshi-prediction-market|g" \
+#     scheduler/crontab.root.example | crontab -
+#
+# (Run as root. Check `crontab -l` first — this REPLACES root's crontab, and
+# `crontab -` reads the whole file, so merge rather than clobber if root already
+# has entries.)
+#
+# Monday 10:00 UTC: a day after the Sunday 09:00 recalibration so its result is
+# included in the audit, and clear of the 05/11/17/23 pipeline slots so the two
+# never contend for the single vCPU.
+0 10 * * 1 /path/to/kalshi-prediction-market/scheduler/run_audit.sh >> /path/to/kalshi-prediction-market/logs/audit.log 2>&1
