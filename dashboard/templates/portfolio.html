@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your Kalshi Portfolio — Kalshi Weather Signals</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <main class="container page-body">
+    <div class="page-head">
+      <h1>Your Kalshi portfolio</h1>
+      <a class="back-link" href="{{ url_for('index') }}">← Back to dashboard</a>
+    </div>
+    <p class="page-subtitle">Real positions on your actual Kalshi account, read-only — not this project's paper-trading simulation, and not limited to weather markets. Nothing here is ever placed, changed, or cancelled by this system.</p>
+    <p class="page-meta tnum">Last updated {{ fetched_at|pacific('%b %-d, %H:%M:%S %Z') }} — fetched live from Kalshi on every load, and this page also refreshes itself every 30s so this timestamp (and everything below it) keeps moving.</p>
+
+    {% if error %}
+    <div class="banner banner-warning">{{ error }}</div>
+    {% else %}
+
+    <div class="stat-grid">
+      <div class="stat-card stat-card--flat">
+        <div class="stat-label">Cost</div>
+        <div class="stat-value tnum">${{ "%.2f"|format(total_cost) }}</div>
+      </div>
+      <div class="stat-card stat-card--flat">
+        <div class="stat-label">Market value</div>
+        <div class="stat-value tnum">{{ "$%.2f"|format(total_market_value) if total_market_value is not none else '—' }}</div>
+      </div>
+      <div class="stat-card {{ 'stat-card--flat' if total_market_value is none else ('stat-card--gain' if total_market_value >= total_cost else 'stat-card--loss') }}">
+        <div class="stat-label">Total return</div>
+        <div class="stat-value tnum">{{ "%+.2f"|format(total_market_value - total_cost) if total_market_value is not none else '—' }}</div>
+      </div>
+      <div class="stat-card {{ 'stat-card--gain' if total_realized_pnl >= 0 else 'stat-card--loss' }}">
+        <div class="stat-label">Realized P&amp;L</div>
+        <div class="stat-value tnum">{{ "%+.2f"|format(total_realized_pnl) }}</div>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <h4>Positions ({{ rows|length }})</h4>
+      <span class="section-head-rule"></span>
+    </div>
+    {% if not rows %}
+    <p class="empty">No open positions on your Kalshi account right now.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Market</th><th>Side</th><th style="text-align:right">Contracts</th><th style="text-align:right">Cost</th><th style="text-align:right">Market value</th><th style="text-align:right">Total return</th><th style="text-align:right">Fees paid</th><th style="text-align:right">Updated</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>
+              {% if row.title %}
+              <div style="font-weight:600">{{ row.title }}</div>{% if row.outcome_label %}<div class="ticker-id" style="margin:0">{{ row.outcome_label }}</div>{% endif %}
+              {% else %}
+              {{ row.ticker }}
+              {% endif %}
+            </td>
+            <td><span class="side-badge side-{{ row.side|lower }}">{{ row.side|upper }}</span></td>
+            <td class="tnum" style="text-align:right">{{ "%.2f"|format(row.contracts) }}</td>
+            <td class="tnum" style="text-align:right">${{ "%.2f"|format(row.cost_dollars) }}</td>
+            <td class="tnum" style="text-align:right">{{ "$%.2f"|format(row.market_value_dollars) if row.market_value_dollars is not none else '—' }}</td>
+            <td class="tnum {{ 'pnl-positive' if row.total_return_dollars is not none and row.total_return_dollars >= 0 else 'pnl-negative' if row.total_return_dollars is not none else '' }}" style="text-align:right">
+              {% if row.total_return_dollars is not none %}
+              {{ "%+.2f"|format(row.total_return_dollars) }}{% if row.total_return_pct is not none %} ({{ "%+.0f%%"|format(row.total_return_pct * 100) }}){% endif %}
+              {% else %}
+              no live quote
+              {% endif %}
+            </td>
+            <td class="tnum" style="text-align:right">${{ "%.2f"|format(row.fees_paid_dollars) }}</td>
+            <td class="tnum" style="text-align:right;color:var(--color-neutral-500)">{{ row.last_updated_ts|pacific('%b %-d, %H:%M %Z') if row.last_updated_ts else '—' }}</td>
+            <td>
+              {% if row.kalshi_url %}
+              <a class="status-link" href="{{ row.kalshi_url }}" target="_blank" rel="noopener noreferrer">Trade on Kalshi ↗</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% endif %}
+  </main>
+
+  {% include "_footer.html" %}
+
+  <script>
+    // Full-page reload, same reasoning as paper_trading.html's — keeps this
+    // in sync with the exact same server-rendered numbers a manual refresh
+    // would show, rather than a separate client-side fetch path that could
+    // drift from it. No dialogs on this page, so no need to wait for one to
+    // close first.
+    setTimeout(function () { location.reload(); }, 30000);
+  </script>
+</body>
+</html>

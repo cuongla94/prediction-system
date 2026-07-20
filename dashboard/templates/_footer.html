@@ -1,0 +1,50 @@
+<div class="site-footer">
+  <div class="site-footer-inner">
+    <svg width="16" height="16" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14.2" stroke="currentColor" stroke-width="1.5"></circle><rect x="11.4" y="11.4" width="9.2" height="9.2" stroke="currentColor" stroke-width="1.5"></rect></svg>
+    Kalshi Weather Signals · read-only research tool · not financial advice
+  </div>
+</div>
+<script>
+  (function () {
+    var bellButton = document.getElementById('bell-button');
+    var bellPanel = document.getElementById('bell-panel');
+    var bellClose = document.getElementById('bell-close');
+    if (!bellButton) return;
+
+    bellButton.addEventListener('click', function (event) {
+      event.stopPropagation();
+      var willOpen = bellPanel.hidden;
+      bellPanel.hidden = !willOpen;
+      bellButton.setAttribute('aria-expanded', String(willOpen));
+    });
+    if (bellClose) {
+      bellClose.addEventListener('click', function () {
+        bellPanel.hidden = true;
+        bellButton.setAttribute('aria-expanded', 'false');
+      });
+    }
+    document.addEventListener('click', function (event) {
+      if (!bellPanel.hidden && !bellPanel.contains(event.target) && event.target !== bellButton) {
+        bellPanel.hidden = true;
+        bellButton.setAttribute('aria-expanded', 'false');
+      }
+    });
+    bellPanel.querySelectorAll('a').forEach(function (link) {
+      link.addEventListener('click', function () {
+        // Open the target's collapsed bracket list *before* the browser's
+        // default navigation runs, so the anchor scroll lands on something
+        // actually visible rather than inside a closed <details>.
+        var target = document.getElementById(link.getAttribute('href').slice(1));
+        var details = target && target.closest('.ladder-toggle');
+        if (details) details.open = true;
+        // Deferred: hiding the panel synchronously here raced with the
+        // click's own default action and silently cancelled the
+        // navigation (confirmed live — location.hash never changed).
+        setTimeout(function () {
+          bellPanel.hidden = true;
+          bellButton.setAttribute('aria-expanded', 'false');
+        }, 0);
+      });
+    });
+  })();
+</script>

@@ -7,69 +7,78 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <header>
-    <div class="header-row">
+  {% include "_nav.html" %}
+
+  <main class="container page-body">
+    <div class="page-head">
       <h1>System status</h1>
       <a class="back-link" href="{{ url_for('index') }}">← Back to dashboard</a>
     </div>
-    <p class="subtitle">Real execution history from generate_alerts / mark_settled_alerts / send_notifications — not inferred from data freshness alone.</p>
-  </header>
+    <p class="page-subtitle" style="max-width:760px">Real execution history from generate_alerts / mark_settled_alerts / send_notifications — not inferred from data freshness alone.</p>
 
-  <div class="banner">
-    No scheduler is deployed yet (see deploy/README.md) — every run below reflects a manual/local
-    execution, not an automated cadence. The "stale after {{ stale_after_hours }}h" flag will mean
-    something once a cron schedule is actually running continuously; until then, don't read a gap
-    here as a failure.
-  </div>
-
-  {% if db_error %}
-  <div class="banner banner-warning">Can't reach the database right now: {{ db_error }}</div>
-  {% else %}
-
-  <section class="status-summary">
-    {% for script in known_scripts %}
-    {% set run = latest.get(script) %}
-    <div class="status-card status-card-{{ run.status if run else 'unknown' }}">
-      <h2>{{ script }}</h2>
-      {% if run is none %}
-      <p class="status-card-state">No runs recorded yet</p>
-      {% else %}
-      <p class="status-card-state">
-        {{ run.status|capitalize }}{% if stale.get(script) %} <span class="status-stale">· stale</span>{% endif %}
-      </p>
-      <p class="status-card-summary">{{ run.summary or '—' }}</p>
-      {% if run.detail %}<p class="status-card-detail">{{ run.detail }}</p>{% endif %}
-      <p class="status-card-time">Started {{ run.started_at.strftime('%b %-d, %Y %H:%M UTC') }}</p>
-      {% endif %}
+    <div class="banner" style="margin:0 0 22px">
+      Runs on a cron schedule (10pm, 4am, 10am, 4pm Pacific — 0 5,11,17,23 UTC on the server) on the
+      production droplet as of 2026-07-18 — a run below with a round-hour timestamp near one of those
+      slots is the real unattended pipeline; one off-the-hour is most likely a manual/local invocation.
+      The "stale after {{ stale_after_hours }}h"
+      flag means something now that a real cadence exists — a genuine gap here is worth investigating.
     </div>
-    {% endfor %}
-  </section>
 
-  <section>
-    <h2>Recent runs</h2>
+    {% if db_error %}
+    <div class="banner banner-warning">Can't reach the database right now: {{ db_error }}</div>
+    {% else %}
+
+    <div class="stat-grid">
+      {% for script in known_scripts %}
+      {% set run = latest.get(script) %}
+      {% set tone = {'success': 'gain', 'failed': 'loss', 'partial': 'warning', 'running': 'accent'}.get(run.status, 'flat') if run else 'flat' %}
+      {% set dot = {'success': 'var(--color-gain)', 'failed': 'var(--color-loss)', 'partial': 'var(--color-warning-text)', 'running': 'var(--color-accent)'}.get(run.status, 'var(--color-neutral-500)') if run else 'var(--color-neutral-400)' %}
+      <div class="stat-card stat-card--{{ tone }}">
+        <div class="stat-label" style="font-family:var(--font-heading);font-weight:600;font-size:15px;letter-spacing:0;text-transform:none;color:var(--color-text)">{{ script }}</div>
+        {% if run is none %}
+        <p class="stat-sub" style="font-weight:600;margin:0">No runs recorded yet</p>
+        {% else %}
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:8px;height:8px;border-radius:50%;background:{{ dot }};flex:none"></span>
+          <span style="font-weight:600;font-size:14px">{{ run.status|capitalize }}{% if stale.get(script) %} · <span class="status-stale">stale</span>{% endif %}</span>
+        </div>
+        <p class="stat-sub" style="margin:0">{{ run.summary or '—' }}</p>
+        {% if run.detail %}<p class="stat-card-detail">{{ run.detail }}</p>{% endif %}
+        <p class="stat-card-time tnum" style="margin:0">Started {{ run.started_at|pacific }}</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="section-head">
+      <h4>Recent runs</h4>
+      <span class="section-head-rule"></span>
+    </div>
     {% if not history %}
     <p class="empty">No runs recorded yet.</p>
     {% else %}
-    <div class="status-history-wrap">
-      <table class="status-history">
+    <div class="table-wrap">
+      <table class="table">
         <thead>
           <tr><th>Script</th><th>Started</th><th>Status</th><th>Summary</th></tr>
         </thead>
         <tbody>
           {% for run in history %}
           <tr>
-            <td>{{ run.script }}</td>
-            <td>{{ run.started_at.strftime('%b %-d, %H:%M UTC') }}</td>
+            <td style="font-family:var(--font-heading);font-weight:600">{{ run.script }}</td>
+            <td class="tnum" style="color:var(--color-neutral-600)">{{ run.started_at|pacific('%b %-d, %H:%M %Z') }}</td>
             <td><span class="status-badge status-{{ run.status }}">{{ run.status|capitalize }}</span></td>
-            <td>{{ run.summary or run.detail or '—' }}</td>
+            <td style="color:var(--color-neutral-700);font-size:13.5px">{{ run.summary or run.detail or '—' }}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
     {% endif %}
-  </section>
 
-  {% endif %}
+    {% endif %}
+  </main>
+
+  {% include "_footer.html" %}
 </body>
 </html>

@@ -19,7 +19,7 @@ from scipy import stats
 
 from kalshi_client import KalshiClient, parse_event_date
 from kalshi_client.models import Market
-from weather.historical_forecast import fetch_historical_daily_max
+from weather.historical_forecast import fetch_historical_daily
 from weather.stations import STATIONS
 
 
@@ -117,12 +117,13 @@ def collect_rows(
     lead_days: int = 1,
 ) -> list[BacktestRow]:
     station = STATIONS[series_ticker]
-    forecasts = fetch_historical_daily_max(
+    forecasts = fetch_historical_daily(
         station.latitude,
         station.longitude,
         station.standard_time_timezone,
         start_date,
         end_date,
+        metric=station.metric,
         lead_days=lead_days,
     )
 

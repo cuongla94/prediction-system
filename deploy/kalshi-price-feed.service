@@ -1,0 +1,22 @@
+[Unit]
+Description=Kalshi Weather Signals live price feed (WebSocket subscriber)
+After=network.target
+
+[Service]
+Type=simple
+User=kalshi
+WorkingDirectory=/opt/kalshi-prediction-market
+# Direct venv binary, not `uv run` — matches kalshi-dashboard.service, more
+# robust under systemd than relying on PATH.
+ExecStart=/opt/kalshi-prediction-market/.venv/bin/python scripts/run_price_feed.py
+Restart=always
+RestartSec=5
+
+# Runs forever, independent of both the dashboard (gunicorn) and the cron
+# pipeline — this needs one persistent WebSocket connection, not a
+# request/response cycle or a scheduled batch job. Writes to Redis
+# (REDIS_URL); if Redis is unreachable this still runs, it just has nowhere
+# to write, and dashboard/app.py falls back to REST either way.
+
+[Install]
+WantedBy=multi-user.target

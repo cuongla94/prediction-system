@@ -7,137 +7,187 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <header>
-    <div class="header-row">
-      <h1>Kalshi Weather Signals</h1>
-      <div class="header-actions">
-        <a class="status-link" href="{{ url_for('status') }}">System status</a>
-        <div class="bell-wrap">
-          <button type="button" class="bell-button" id="bell-button" aria-haspopup="true" aria-expanded="false">
-            🔔
-            {% if actionable_alerts %}<span class="bell-badge">{{ actionable_alerts|length }}</span>{% endif %}
-          </button>
-          <div class="bell-panel" id="bell-panel" hidden>
-            <h2>Actionable alerts</h2>
-            {% if actionable_alerts %}
-            <ul class="bell-list">
-              {% for alert in actionable_alerts %}
-              <li>
-                <a href="#row-{{ alert.market_ticker | replace('.', '-') }}">
-                  <span class="side-badge">{{ alert.side }}</span>
-                  {{ alert.city }} {{ alert.bracket_label }}
-                  <span class="pick-edge">{{ "%+.1f%%"|format(alert.edge * 100) }}</span>
-                </a>
-              </li>
-              {% endfor %}
-            </ul>
-            {% else %}
-            <p class="bell-empty">Nothing actionable right now.</p>
-            {% endif %}
-          </div>
-        </div>
+  {% include "_nav.html" %}
+
+  <main class="container page-body">
+    <h1>Weather signals</h1>
+    <p class="page-subtitle" style="max-width:640px">Day-ahead temperature markets, ranked by modelled edge. Stakes assume quarter-Kelly sizing capped at {{ "%.0f%%"|format(max_event_exposure * 100) }} of bankroll per event.</p>
+    <p class="page-meta tnum">Last updated {{ fetched_at|pacific('%b %-d, %H:%M:%S %Z') }} — live temperature readings are real NWS station data, refreshed on every load; this page also refreshes itself every 30s so this timestamp keeps moving.</p>
+
+    <details class="callout">
+      <summary class="callout-toggle">
+        <span class="callout-icon">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
+        </span>
+        <span class="callout-title">How validated is this? — read before trading</span>
+        <span class="callout-chevron">▸</span>
+      </summary>
+      <div class="callout-body">
+        <p><strong>Improved, partially validated — and how much varies a lot by city and metric right now.</strong> The original 6 cities' High Temperature markets (NYC, Chicago, Philadelphia, Austin, Denver, Miami) have the deepest history (420–460+ settled days) and are the only ones cross-checked against NOAA's independent station data so far (2026-07-18: Kalshi's own settlement results agreed on 3,759 of 3,762 comparable days, 99.9%).</p>
+        <p>Where there's enough history to check it, the day-ahead forecast's bias isn't constant through the year — NYC's flips from +2.7°F cold in January to -1.6°F warm in July — so those markets use a month-specific correction instead of one flat number.</p>
+        <p>The <strong>14 cities added 2026-07-19</strong>, and every city's Low Temperature market (including the original 6's), have much less history (roughly 75–150 settled days) and haven't been through that NOAA cross-check yet — treat those specifically as less proven, not equally validated just because they're on the same dashboard. Exact per-city numbers are on the <a href="{{ url_for('backtest') }}">Backtest results</a> page. A fatter-tailed distribution was tried earlier and didn't help, so this stays a standard bell curve everywhere. Predictions above ~40% are still thinly sampled across the board, too — treat those as exploratory, not a trading signal.</p>
       </div>
-    </div>
-  </header>
+    </details>
 
-  {% if any_unvalidated %}
-  <div class="banner banner-warning">
-    <strong>Improved, partially validated (last backtested 2026-07-18 against ~600 real settled days/city).</strong>
-    The day-ahead forecast's bias isn't constant through the year — NYC's flips from +2.7°F cold in
-    January to -1.6°F warm in July — so NYC, Chicago, and Denver now use a month-specific correction;
-    Philadelphia, Austin, and Miami's seasonal swing was small enough that a single flat correction still
-    tested better for them. A fatter-tailed distribution was tried earlier and didn't help, so this stays
-    a standard bell curve. Cross-checked against NOAA's independent station data on 2026-07-18: Kalshi's
-    own settlement results agreed on 3,759 of 3,762 comparable days (99.9%) — that data holds up.
-    Predictions above ~40% are still thinly sampled, though — treat those specifically as exploratory,
-    not a trading signal.
-  </div>
-  {% endif %}
-
-  {% if demo_reason %}
-  <div class="banner">{{ demo_reason }} Bracket data, prices, and rules text are a real snapshot pulled live from Kalshi and Open-Meteo; model probability and edge are computed by the real engine, not illustrative — but see the warning above.</div>
-  {% endif %}
-
-  {% if events %}
-  <div class="controls">
-    <input type="search" id="search-input" placeholder="Search by city or bracket…" aria-label="Search alerts">
-    <select id="category-filter" aria-label="Filter by category">
-      <option value="">All categories</option>
-      <option value="daily-temperature">Daily temperature</option>
-    </select>
-    <select id="status-filter" aria-label="Filter by trading status">
-      <option value="">Open + closed</option>
-      <option value="open">Open only</option>
-      <option value="closed">Closed only</option>
-    </select>
-    <label class="checkbox-label"><input type="checkbox" id="actionable-filter"> Actionable only</label>
-    <span class="controls-count" id="controls-count"></span>
-  </div>
-  <p class="controls-note">
-    Stakes below assume quarter-Kelly sizing ({{ "%.0f%%"|format(kelly_fraction * 100) }} of the
-    theoretical optimum) capped at {{ "%.0f%%"|format(max_event_exposure * 100) }} of bankroll per
-    event, shown as a percentage of whatever bankroll you're actually risking.
-  </p>
-  {% endif %}
-
-  <main>
-    {% if not events %}
-    <p class="empty">No alerts right now.</p>
+    {% if demo_reason %}
+    <div class="banner">{{ demo_reason }} Bracket data, prices, and rules text are a real snapshot pulled live from Kalshi and Open-Meteo; model probability and edge are computed by the real engine, not illustrative — but see the validation note above.</div>
     {% endif %}
 
-    <p class="no-results" id="no-results" hidden>No alerts match your search or filters.</p>
-
-    {% for event in events %}
+    {% macro event_card(event, today_lows, today_highs) %}
     <section class="event-card">
-      <div class="event-header">
-        <a class="event-category" href="https://kalshi.com/category/climate/daily-temperature" target="_blank" rel="noopener noreferrer">Daily temperature</a>
-        <h2 class="event-question">Highest temperature in {{ event.city }} today?</h2>
-        <p class="event-meta">
-          <span class="status-badge status-{{ event.trading_status }}">{{ event.trading_status|capitalize }}</span>
-          <span class="event-date">{{ event.date_label }}</span>
-          {% if event.city in current_temps %}
-          <span class="current-temp">
-            <span class="live-dot"></span>
-            LIVE {{ "%.0f"|format(current_temps[event.city][0]) }}°F
-            <span class="help" tabindex="0">?<span class="tooltip">A live reading right now, not part of
-              the model's forecast — just a quick sanity check against where the day is heading.</span></span>
-          </span>
-          {% endif %}
-          {% if event.close_time %}
-          <span class="countdown" data-close-time="{{ event.close_time }}">—</span>
-          {% endif %}
-          <a class="trade-link event-trade-link" href="{{ event.kalshi_url }}" target="_blank" rel="noopener noreferrer">
-            Trade on Kalshi ↗
+      <div class="event-card-body">
+        <div class="event-header-row">
+          <div class="event-header">
+            <a class="event-category" href="https://kalshi.com/category/climate/daily-temperature" target="_blank" rel="noopener noreferrer">{{ event.category_label }}</a>
+            <h3 class="event-question">{{ event.metric_label|capitalize }} temperature in {{ event.city }} {{ "today" if event.lead_days == 0 else "tomorrow" if event.lead_days == 1 else "" }}?</h3>
+            <p class="event-meta">
+              <span class="status-badge status-{{ event.trading_status }}">{{ event.trading_status|capitalize }}</span>
+              <span class="tnum">{{ event.date_label }}</span>
+              {% set is_low = event.metric_label == "lowest" %}
+              {% set extremes = today_lows if is_low else today_highs %}
+              {% if event.is_same_day and event.city in extremes %}
+              <span class="current-temp">
+                <span class="live-dot"></span>
+                <span class="tnum">{{ "LOW" if is_low else "HIGH" }} SO FAR {{ "%.1f"|format(extremes[event.city][0]) }}°F</span>
+                <span class="help" tabindex="0">?<span class="tooltip">The actual {{ event.metric_label }} reading so far
+                  today at the real settlement station — not a forecast. This is usually more useful than "right
+                  now": the {{ "coldest" if is_low else "hottest" }} part of the day is often already behind us
+                  by the time you're looking at this.</span></span>
+              </span>
+              {% endif %}
+              {% if event.close_time %}
+              <span class="countdown tnum" data-close-time="{{ event.close_time }}">—</span>
+              {% endif %}
+            </p>
+          </div>
+          <a class="btn btn-primary event-trade-link" href="{{ event.kalshi_url }}" target="_blank" rel="noopener noreferrer">
+            Trade on Kalshi <span>↗</span>
           </a>
-        </p>
+        </div>
         <p class="event-note">
-          All {{ event.alerts|length }} brackets for this day are one distribution, not independent
-          picks — {{ event.actionable_count }} clear the threshold below.
+          {{ event.actionable_count }} of {{ event.alerts|length }} brackets clear the threshold below.
           <span class="help" tabindex="0">?<span class="tooltip">These brackets are all bets on the
-            same day's temperature, so they move together, not independently. This line adds up
-            every bracket's market price for the day — it should land near 100% if the market is
-            being consistent with itself across the whole ladder. {{ "%+.0f%%"|format(event.sum_deviation * 100) }}
-            means the market's prices for this day add up to {{ "%.0f%%"|format((1 + event.sum_deviation) * 100) }}
+            same day's temperature, not independent picks — they move together, so treat them as one
+            position, not a menu to choose from. This line also adds up every bracket's market price
+            for the day — it should land near 100% if the market is being consistent with itself
+            across the whole ladder. {{ "%+.0f%%"|format(event.sum_deviation * 100) }} means the
+            market's prices for this day add up to {{ "%.0f%%"|format((1 + event.sum_deviation) * 100) }}
             of certainty, not exactly 100%.</span></span>
           {% if event.total_recommended_fraction > 0 %}
           — suggested total exposure for this event:
-          <strong class="stake-value">{{ "%.1f%%"|format(event.total_recommended_fraction * 100) }} of bankroll</strong>
+          <strong class="stake-value tnum">{{ "%.1f%%"|format(event.total_recommended_fraction * 100) }} of bankroll</strong>
           {% endif %}
         </p>
       </div>
       <details class="ladder-toggle">
-        <summary>{{ event.alerts|length }} brackets · {{ event.actionable_count }} actionable</summary>
-        <table class="ladder">
+        <summary><span class="chevron">▸</span>{{ event.alerts|length }} brackets · {{ event.actionable_count }} actionable</summary>
+        <div class="table-wrap">
+        <table class="table ladder">
           <tbody>
             {% for alert in event.alerts %}
               {% include "_alert_card.html" %}
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </details>
     </section>
+    {% endmacro %}
+
+    {% if today_events or tomorrow_events %}
+    <div class="controls">
+      <div class="search-field">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+        <input class="input" type="search" id="search-input" placeholder="Search by city or bracket…" aria-label="Search alerts">
+      </div>
+      <select class="input" id="category-filter" aria-label="Filter by category">
+        <option value="">All categories</option>
+        <option value="daily-temperature">Daily temperature</option>
+        <option value="high-temperature">High temperature</option>
+        <option value="low-temperature">Low temperature</option>
+      </select>
+      <select class="input" id="status-filter" aria-label="Filter by trading status">
+        <option value="open" selected>Open only</option>
+        <option value="">Open + closed</option>
+        <option value="closed">Closed only</option>
+      </select>
+      <label class="checkbox-label"><input type="checkbox" id="actionable-filter"><span class="dot"></span>Actionable only</label>
+      <span class="controls-count tnum" id="controls-count"></span>
+    </div>
+    <p class="controls-note">
+      Stakes below assume quarter-Kelly sizing ({{ "%.0f%%"|format(kelly_fraction * 100) }} of the
+      theoretical optimum) capped at {{ "%.0f%%"|format(max_event_exposure * 100) }} of bankroll per
+      event, shown as a percentage of whatever bankroll you're actually risking.
+    </p>
+    {% endif %}
+
+    {% if not today_events and not tomorrow_events %}
+    <p class="empty">No alerts right now.</p>
+    {% endif %}
+
+    <p class="no-results" id="no-results" hidden>No alerts match your search or filters.</p>
+
+    {% if tomorrow_events %}
+    <div class="section-head">
+      <h4>Tomorrow — day-ahead</h4>
+      <span class="tag tag-accent">Primary signal</span>
+      <span class="section-head-rule"></span>
+    </div>
+    <p class="section-note">Already open for trading, before today's markets close. This is the
+      ~24h-ahead forecast lead time the model is actually calibrated and backtested against — entering
+      here also means getting in before same-day volume crowds in and narrows the edge.</p>
+    {% for event in tomorrow_events %}{{ event_card(event, today_lows, today_highs) }}{% endfor %}
+    {% endif %}
+
+    {% if today_events %}
+    <div class="section-head" style="margin-top:8px">
+      <h4>Today — same-day</h4>
+      <span class="section-head-rule"></span>
+    </div>
+    <p class="section-note">The market may already reflect real-time information a same-day forecast
+      doesn't have — an overnight low, for instance, has often already happened by the time you're
+      looking at this (see <a href="{{ url_for('backtest') }}">Backtest results</a> for how this
+      differs from the day-ahead calibration above). Lower confidence; the paper-trading bot doesn't
+      trade these at all.</p>
+    {% for event in today_events %}{{ event_card(event, today_lows, today_highs) }}{% endfor %}
+    {% endif %}
+
+    {% if preview_groups %}
+    <div class="section-head" style="margin-top:8px">
+      <h4>Looking ahead</h4>
+      <span class="section-head-rule"></span>
+    </div>
+    <p class="section-note">Kalshi hasn't opened a market for these dates yet — nothing to trade, no
+      edge to compute, just what the model currently expects. Reuses the day-ahead calibration above as
+      a rough approximation; it hasn't been separately validated at this lead time, so treat this as
+      advance notice for planning, not a signal. Worth checking back once the market opens.</p>
+    {% for group in preview_groups %}
+    <div class="card" style="margin-bottom:20px;overflow:hidden">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--color-divider);display:flex;align-items:center;gap:10px">
+        <span style="font-family:var(--font-heading);font-weight:600;font-size:16px">{{ group.date_label }}</span>
+        <span class="tag tag-outline">{{ group.lead_days }} day{{ "" if group.lead_days == 1 else "s" }} out</span>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>City</th><th>Metric</th><th style="text-align:right">Expected</th><th style="text-align:right">Likely range</th></tr></thead>
+          <tbody>
+            {% for row in group.rows %}
+            <tr>
+              <td style="font-weight:600">{{ row.city }}</td>
+              <td>{{ row.metric_label|capitalize }}</td>
+              <td class="tnum" style="text-align:right;font-weight:600">{{ "%.1f°F"|format(row.calibrated_mean) }}</td>
+              <td class="tnum" style="text-align:right;color:var(--color-neutral-600)">{{ "%.1f"|format(row.range_low) }}–{{ "%.1f°F"|format(row.range_high) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
     {% endfor %}
+    {% endif %}
   </main>
+
+  {% include "_footer.html" %}
 
   <script>
     (function () {
@@ -150,12 +200,19 @@
       var groups = document.querySelectorAll('.event-card');
       if (!searchInput) return;
 
+      // "open" is the page's own default status filter (not a user action),
+      // so it must not count as "actively narrowing" for the force-open
+      // logic below — otherwise every group would force itself open on
+      // every plain page load, defeating collapsed-by-default entirely.
+      var DEFAULT_STATUS = 'open';
+
       function applyFilters() {
         var search = searchInput.value.trim().toLowerCase();
         var category = categoryFilter.value;
         var status = statusFilter.value;
         var actionableOnly = actionableFilter.checked;
-        var filtersActive = !!(search || category || status || actionableOnly);
+        var statusActive = status && status !== DEFAULT_STATUS;
+        var filtersActive = !!(search || category || statusActive || actionableOnly);
         var visibleCount = 0;
         var totalCount = 0;
 
@@ -207,43 +264,6 @@
     });
 
     (function () {
-      var bellButton = document.getElementById('bell-button');
-      var bellPanel = document.getElementById('bell-panel');
-      if (!bellButton) return;
-
-      bellButton.addEventListener('click', function (event) {
-        event.stopPropagation();
-        var willOpen = bellPanel.hidden;
-        bellPanel.hidden = !willOpen;
-        bellButton.setAttribute('aria-expanded', String(willOpen));
-      });
-      document.addEventListener('click', function (event) {
-        if (!bellPanel.hidden && !bellPanel.contains(event.target) && event.target !== bellButton) {
-          bellPanel.hidden = true;
-          bellButton.setAttribute('aria-expanded', 'false');
-        }
-      });
-      bellPanel.querySelectorAll('a').forEach(function (link) {
-        link.addEventListener('click', function () {
-          // Open the target's collapsed bracket list *before* the browser's
-          // default navigation runs, so the anchor scroll lands on something
-          // actually visible rather than inside a closed <details>.
-          var target = document.getElementById(link.getAttribute('href').slice(1));
-          var details = target && target.closest('.ladder-toggle');
-          if (details) details.open = true;
-          // Deferred: hiding the panel synchronously here raced with the
-          // click's own default action and silently cancelled the
-          // navigation (confirmed live — location.hash never changed).
-          // Letting the click finish first, then hiding, fixes it.
-          setTimeout(function () {
-            bellPanel.hidden = true;
-            bellButton.setAttribute('aria-expanded', 'false');
-          }, 0);
-        });
-      });
-    })();
-
-    (function () {
       var countdowns = document.querySelectorAll('.countdown[data-close-time]');
       if (!countdowns.length) return;
 
@@ -269,7 +289,7 @@
 
           // Keep the status badge in sync without a page reload — e.g. a
           // market that closes while someone's already looking at the page.
-          var badge = el.parentElement.querySelector('.status-badge');
+          var badge = el.closest('.event-meta') && el.closest('.event-meta').querySelector('.status-badge');
           if (badge && remaining <= 0 && !badge.classList.contains('status-closed')) {
             badge.textContent = 'Closed';
             badge.className = 'status-badge status-closed';
@@ -279,6 +299,21 @@
 
       tick();
       setInterval(tick, 1000);
+    })();
+
+    (function () {
+      // Same reasoning as paper_trading.html's — full-page reload keeps this
+      // in sync with the exact same server-rendered numbers a manual refresh
+      // would show. Waits for any open Details modal to close first so a
+      // reload doesn't yank it away mid-read.
+      var REFRESH_MS = 30000;
+      var CHECK_MS = 3000;
+      var dueAt = Date.now() + REFRESH_MS;
+      setInterval(function () {
+        if (Date.now() < dueAt) return;
+        if (document.querySelector('dialog[open]')) return;
+        location.reload();
+      }, CHECK_MS);
     })();
   </script>
 </body>

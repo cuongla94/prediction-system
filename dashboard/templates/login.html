@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — Kalshi Weather Signals</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="gilt-bar"></div>
+  <div class="login-shell">
+    <div class="login-card">
+      <span style="color:var(--color-accent);display:inline-flex;margin-bottom:14px">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <circle cx="16" cy="16" r="14.2" stroke="currentColor" stroke-width="1.5"></circle>
+          <circle cx="16" cy="16" r="10.4" stroke="currentColor" stroke-width="0.9" opacity="0.7"></circle>
+          <rect x="11.4" y="11.4" width="9.2" height="9.2" stroke="currentColor" stroke-width="1.5"></rect>
+        </svg>
+      </span>
+      <h1>Kalshi Weather Signals</h1>
+      <p class="page-subtitle">Enter your 6-digit passcode.</p>
+
+      {% if error %}
+      <p class="login-error">{{ error }}</p>
+      {% endif %}
+
+      <form method="post" id="login-form">
+        <input type="hidden" name="passcode" id="passcode-value">
+        <div class="passcode-boxes">
+          {% for i in range(6) %}
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" class="passcode-digit" autocomplete="off" {% if i == 0 %}autofocus{% endif %}>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-primary btn-block" id="passcode-submit" disabled>Unlock</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var digits = Array.from(document.querySelectorAll('.passcode-digit'));
+      var hidden = document.getElementById('passcode-value');
+      var submit = document.getElementById('passcode-submit');
+      var form = document.getElementById('login-form');
+
+      function sync() {
+        var value = digits.map(function (d) { return d.value; }).join('');
+        hidden.value = value;
+        submit.disabled = value.length !== 6;
+      }
+
+      digits.forEach(function (input, i) {
+        input.addEventListener('input', function () {
+          input.value = input.value.replace(/[^0-9]/g, '').slice(0, 1);
+          if (input.value && i < digits.length - 1) digits[i + 1].focus();
+          sync();
+        });
+        input.addEventListener('keydown', function (event) {
+          if (event.key === 'Backspace' && !input.value && i > 0) {
+            digits[i - 1].focus();
+          }
+        });
+        input.addEventListener('paste', function (event) {
+          var pasted = (event.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+          if (!pasted) return;
+          event.preventDefault();
+          digits.forEach(function (d, j) { d.value = pasted[j] || ''; });
+          sync();
+          var nextEmpty = digits.find(function (d) { return !d.value; });
+          (nextEmpty || digits[digits.length - 1]).focus();
+        });
+      });
+
+      form.addEventListener('submit', function (event) {
+        if (hidden.value.length !== 6) event.preventDefault();
+      });
+    })();
+  </script>
+</body>
+</html>

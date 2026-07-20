@@ -43,10 +43,12 @@ if [ ! -f "$APP_DIR/.env" ]; then
   echo "starting the dashboard service or installing the crontab — see deploy/README.md." >&2
 fi
 
-echo "==> Installing systemd service"
+echo "==> Installing systemd services"
 cp deploy/kalshi-dashboard.service /etc/systemd/system/kalshi-dashboard.service
+cp deploy/kalshi-price-feed.service /etc/systemd/system/kalshi-price-feed.service
 systemctl daemon-reload
 systemctl enable kalshi-dashboard
+systemctl enable kalshi-price-feed
 
 echo "==> Installing crontab for $APP_USER"
 sed "s|/path/to/kalshi-prediction-market|$APP_DIR|g" scheduler/crontab.example > /tmp/kalshi-crontab
@@ -63,6 +65,6 @@ echo ""
 echo "Done. Remaining manual steps:"
 echo "  1. If .env wasn't already in place, scp it (+ secrets/, certs/) from your"
 echo "     local machine to $APP_DIR, then chown -R $APP_USER:$APP_USER $APP_DIR"
-echo "  2. systemctl start kalshi-dashboard"
-echo "  3. systemctl status kalshi-dashboard   # confirm it's running"
+echo "  2. systemctl start kalshi-dashboard kalshi-price-feed"
+echo "  3. systemctl status kalshi-dashboard kalshi-price-feed   # confirm both are running"
 echo "  4. ssh -L 8000:localhost:8000 <this-droplet>   # then open http://localhost:8000 locally"

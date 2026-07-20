@@ -19,6 +19,7 @@ Usage: uv run scripts/fit_calibration_params.py
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 from dotenv import load_dotenv
@@ -27,6 +28,7 @@ from backtest.cache import cached_collect_rows
 from backtest.calibration import brier_score
 from backtest.harness import fit_empirical_normal, fit_monthly_bias, split_by_date
 from kalshi_client import KalshiClient
+from monitoring import track_run
 from weather.probability import bracket_probability
 from weather.stations import STATIONS
 
@@ -128,6 +130,9 @@ def fit_for_city(client: KalshiClient, series_ticker: str) -> dict:
         monthly_bias={m: round(b, 4) for m, b in monthly_bias.items()} if use_monthly else None,
         std=round(std, 4),
         fit_days=len({row.target_date for row in fit_rows}),
+        flat_brier=round(flat_brier, 4),
+        monthly_brier=round(monthly_brier, 4),
+        use_monthly=use_monthly,
     )
 
 
@@ -148,19 +153,40 @@ def main() -> None:
     fit_date = date.today().isoformat()
 
     print(f"Fitting calibration params from {START_DATE} to {END_DATE}...")
-    results = []
-    with KalshiClient() as client:
-        for series_ticker in STATIONS:
-            results.append(fit_for_city(client, series_ticker))
+    with track_run("fit_calibration_params") as run, KalshiClient() as client:
+        results = [fit_for_city(client, series_ticker) for series_ticker in STATIONS]
 
-    entries = "".join(render_entry(r, fit_date) for r in results)
-    content = (
-        _HEADER.format(fit_date=fit_date, start_date=START_DATE, end_date=END_DATE, entries=entries)
-        + _FOOTER
-    )
-    with open(_OUTPUT_PATH, "w") as f:
-        f.write(content)
-    print(f"\nWrote {_OUTPUT_PATH}")
+        entries = "".join(render_entry(r, fit_date) for r in results)
+        content = (
+            _HEADER.format(fit_date=fit_date, start_date=START_DATE, end_date=END_DATE, entries=entries)
+            + _FOOTER
+        )
+        with open(_OUTPUT_PATH, "w") as f:
+            f.write(content)
+        print(f"\nWrote {_OUTPUT_PATH}")
+
+        # Structured, not prose, so the dashboard's /backtest page can render
+        # this directly instead of a human having to re-run the script and
+        # read stdout to see which cities currently use monthly vs. flat.
+        # Keyed by series_ticker, not just city: every city now has both a
+        # High and a Low Temperature series (added 2026-07-19), so "city"
+        # alone can't distinguish the two rows a single city produces here —
+        # a city-only key silently let one metric's Brier scores overwrite
+        # the other's on dashboard/app.py's read side.
+        run.summary = f"Fit {len(results)} cities from {START_DATE} to {END_DATE}"
+        run.detail = json.dumps(
+            [
+                {
+                    "city": STATIONS[r["series_ticker"]].city,
+                    "series_ticker": r["series_ticker"],
+                    "flat_brier": r["flat_brier"],
+                    "monthly_brier": r["monthly_brier"],
+                    "using": "monthly" if r["use_monthly"] else "flat",
+                    "fit_days": r["fit_days"],
+                }
+                for r in results
+            ]
+        )
 
 
 if __name__ == "__main__":

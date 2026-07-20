@@ -19,20 +19,30 @@ PREVIOUS_RUNS_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
 DEFAULT_MODELS = ("gfs_seamless", "ecmwf_ifs025", "icon_seamless")
 
 
-def fetch_historical_daily_max(
+def fetch_historical_daily(
     latitude: float,
     longitude: float,
     timezone: str,
     start_date: str,
     end_date: str,
+    metric: str = "max",
     lead_days: int = 1,
     models: tuple[str, ...] = DEFAULT_MODELS,
 ) -> dict[str, dict[str, float]]:
-    """Per-model daily-max point forecasts across a date range, at a fixed lead
-    time. Returns {date_iso: {model_name: forecast_value}} — a date is present
-    only for models that had coverage for it (older dates may be GFS-only, since
+    """Per-model daily-extreme point forecasts across a date range, at a fixed
+    lead time. `metric` is "max" or "min" — matches `Station.metric` directly;
+    the Previous Runs API only archives hourly points (see module docstring),
+    so the daily extreme is reduced client-side with the matching builtin.
+
+    Returns {date_iso: {model_name: forecast_value}} — a date is present only
+    for models that had coverage for it (older dates may be GFS-only, since
     ECMWF/ICON archives start later).
     """
+    if metric not in ("max", "min"):
+        raise ValueError(f"metric must be 'max' or 'min', got {metric!r}")
+    reduce = max if metric == "max" else min
+    sentinel = float("-inf") if metric == "max" else float("inf")
+
     field = f"temperature_2m_previous_day{lead_days}"
     params = {
         "latitude": latitude,
@@ -59,5 +69,5 @@ def fetch_historical_daily_max(
                 continue
             date = timestamp.split("T")[0]
             by_model = result.setdefault(date, {})
-            by_model[model] = max(value, by_model.get(model, float("-inf")))
+            by_model[model] = reduce(value, by_model.get(model, sentinel))
     return result

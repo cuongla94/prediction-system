@@ -61,9 +61,26 @@ systemctl status kalshi-dashboard    # should show "active (running)"
 journalctl -u kalshi-dashboard -n 50 # check for startup errors
 ```
 
-The dashboard binds to `127.0.0.1` only (see `dashboard/app.py` and
-`deploy/kalshi-dashboard.service`) — it's not reachable from the internet.
-View it via an SSH tunnel:
+The dashboard itself still binds to `127.0.0.1` only (see `dashboard/app.py` and
+`deploy/kalshi-dashboard.service`) — gunicorn is never directly reachable from
+the internet. As of 2026-07-19, `nginx` sits in front as a reverse proxy on
+port 80, with HTTP Basic Auth (`/etc/nginx/.htpasswd`, config at
+`/etc/nginx/sites-available/kalshi-dashboard`) — that's now the supported way
+to reach it directly:
+
+```
+http://<droplet-ip>/
+```
+
+No TLS yet — this is plain HTTP, chosen deliberately since nothing served
+today is financially sensitive (the paper-trading bot is simulated, no real
+money or credentials involved) and no domain was available to get a real
+cert against. Revisit with a real domain + Let's Encrypt if that changes.
+Credentials aren't stored in this repo; ask whoever set it up (or re-run
+`htpasswd` on the droplet to rotate them).
+
+The SSH tunnel still works too, and bypasses Basic Auth entirely (talks to
+gunicorn directly, not through nginx) — useful for local debugging:
 
 ```bash
 ssh -L 8000:localhost:8000 root@<droplet-ip>

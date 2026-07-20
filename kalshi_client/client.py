@@ -1,23 +1,35 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 import httpx
 
 from .auth import KalshiCredentials, sign_request
 from .exceptions import KalshiAPIError, KalshiAuthError
-from .models import Event, Market, Series
+from .models import Event, Market, Position, Series
 
 DEFAULT_BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
 
+# Confirmed live 2026-07-19: scaling from 6 tracked cities to 20 (40 series,
+# ~3 calls each in a tight loop) reliably exhausted Kalshi's rate limit
+# partway through a single generate_alerts.py run — every request past
+# roughly the 10th station came back 429, for the rest of that run, not just
+# a brief blip. Exponential backoff, retried in-place rather than surfaced
+# as a per-city failure, since the request itself is fine — it just needs
+# to wait for the token bucket to refill.
+_MAX_RATE_LIMIT_RETRIES = 5
+_INITIAL_BACKOFF_SECONDS = 1.0
+
 
 class KalshiClient:
-    """Thin REST client for Kalshi's market-data and (eventually) trading endpoints.
+    """Thin REST client for Kalshi's market-data and portfolio-read endpoints.
 
     Series/event/market discovery endpoints are public and work with no credentials.
-    Portfolio and order endpoints require `credentials` and are not implemented yet —
-    this project doesn't auto-place trades.
+    Portfolio endpoints (e.g. get_positions) require `credentials` and are read-only —
+    this project never places, cancels, or modifies real orders, and has no method
+    that would.
     """
 
     def __init__(
@@ -75,10 +87,19 @@ class KalshiClient:
                     "(set KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PATH)."
                 )
             headers = sign_request(self._credentials, method, self._sign_path_prefix + endpoint)
-        response = self._http.request(method, endpoint, params=params, headers=headers)
-        if response.is_error:
-            raise KalshiAPIError.from_response(response)
-        return response.json()
+
+        backoff = _INITIAL_BACKOFF_SECONDS
+        for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
+            response = self._http.request(method, endpoint, params=params, headers=headers)
+            if response.status_code == 429 and attempt < _MAX_RATE_LIMIT_RETRIES:
+                retry_after = response.headers.get("Retry-After")
+                wait_seconds = float(retry_after) if retry_after else backoff
+                time.sleep(wait_seconds)
+                backoff *= 2
+                continue
+            if response.is_error:
+                raise KalshiAPIError.from_response(response)
+            return response.json()
 
     # ---- Series -----------------------------------------------------------
 
@@ -168,3 +189,25 @@ class KalshiClient:
         data = self._request("GET", "/historical/markets", params=params)
         markets = [Market.from_dict(m) for m in data["markets"]]
         return markets, data.get("cursor") or None
+
+    # ---- Portfolio (read-only) ------------------------------------------
+
+    def get_positions(self) -> list[Position]:
+        """Every market with a currently non-zero position on the real
+        Kalshi account these credentials belong to — actual holdings placed
+        directly on kalshi.com, unrelated to this project's own paper_trades
+        simulation. Requires credentials (authed=True); paginates internally
+        via cursor so callers always get the full list in one call, not a
+        page needing further handling. `count_filter="position"` scopes to
+        markets with a nonzero position, not every market ever touched.
+        """
+        positions: list[Position] = []
+        cursor: str | None = None
+        while True:
+            params = {"count_filter": "position", "limit": 1000, "cursor": cursor}
+            params = {k: v for k, v in params.items() if v is not None}
+            data = self._request("GET", "/portfolio/positions", params=params, authed=True)
+            positions.extend(Position.from_dict(p) for p in data["market_positions"])
+            cursor = data.get("cursor") or None
+            if not cursor:
+                return positions

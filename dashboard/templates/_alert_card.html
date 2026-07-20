@@ -1,7 +1,7 @@
 {% macro stat(label, value, help_text, css_class="") %}
 <div>
   <dt>{{ label }}<span class="help" tabindex="0">?<span class="tooltip">{{ help_text }}</span></span></dt>
-  <dd class="{{ css_class }}">{{ value }}</dd>
+  <dd class="tnum {{ css_class }}">{{ value }}</dd>
 </div>
 {% endmacro %}
 
@@ -10,17 +10,17 @@
 <tr id="row-{{ alert.market_ticker | replace('.', '-') }}"
     class="ladder-row {{ 'actionable' if alert.is_actionable else 'muted' }} side-{{ alert.side|lower }}"
     data-search="{{ (alert.city ~ ' ' ~ alert.bracket_label ~ ' ' ~ alert.question)|lower }}"
-    data-category="daily-temperature"
+    data-category="{{ alert.category }}"
     data-status="{{ event.trading_status }}"
     data-actionable="{{ 'true' if alert.is_actionable else 'false' }}">
-  <td class="ladder-bracket">{{ alert.bracket_label }}</td>
+  <td class="ladder-bracket tnum">{{ alert.bracket_label }}</td>
   <td class="ladder-pick">
     <span class="side-badge">{{ alert.side }}</span>
-    <span class="pick-edge">{{ "%+.1f%%"|format(alert.edge * 100) }} edge</span>
-    <span class="win-probability">{{ "%.0f%%"|format(alert.win_probability * 100) }} win chance</span>
+    <span class="pick-edge tnum">{{ "%+.1f%%"|format(alert.edge * 100) }} edge</span>
+    <span class="win-probability tnum">{{ "%.0f%%"|format(alert.win_probability * 100) }} win chance</span>
   </td>
   <td class="ladder-actions">
-    <button type="button" class="btn-details"
+    <button type="button" class="btn btn-secondary"
             onclick="document.body.style.overflow='hidden'; document.getElementById('details-{{ alert.id }}').showModal()">
       Details
     </button>
@@ -32,7 +32,7 @@
 
       <p class="modal-question">{{ alert.question }}</p>
       <div class="modal-header">
-        <span class="modal-bracket">{{ alert.bracket_label }}</span>
+        <span class="modal-bracket tnum">{{ alert.bracket_label }}</span>
         <span class="side-badge">{{ alert.side }}</span>
       </div>
       <p class="ticker-id">{{ alert.market_ticker }}</p>
@@ -52,7 +52,7 @@
             since our confidence itself isn't perfectly known). Already reduced to account for the
             other brackets in this same event competing for the same risk budget.</span></span>
         </span>
-        <span class="stake-value">
+        <span class="stake-value tnum">
           {{ "%.1f%%"|format(sizing.recommended_fraction * 100) }} of bankroll
         </span>
       </p>
@@ -63,6 +63,9 @@
         {% if alert.rules_secondary %}
         <p class="rules-secondary">{{ alert.rules_secondary }}</p>
         {% endif %}
+        <p class="rules-source">Outcome verified from
+          <a href="{{ settlement_source_url(alert) }}" target="_blank" rel="noopener noreferrer">NWS Climatological Report {{ alert.city }}</a>.
+        </p>
       </details>
 
       <details class="reasoning">

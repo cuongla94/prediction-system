@@ -16,7 +16,7 @@ import sys
 from dotenv import load_dotenv
 
 from kalshi_client import KalshiClient, parse_event_date, taker_fee
-from weather.open_meteo import fetch_daily_max_ensemble
+from weather.open_meteo import fetch_daily_ensemble
 from weather.probability import calibrated_probability_for_market, check_boundary_language, fit_normal
 from weather.stations import get_station
 
@@ -37,8 +37,12 @@ def main() -> None:
     event_date = parse_event_date(event.event_ticker)
     print(f"{station.city}: {event.title!r} ({event_date})")
 
-    ensemble = fetch_daily_max_ensemble(
-        station.latitude, station.longitude, station.standard_time_timezone, forecast_days=3
+    ensemble = fetch_daily_ensemble(
+        station.latitude,
+        station.longitude,
+        station.standard_time_timezone,
+        metric=station.metric,
+        forecast_days=3,
     )
     members = ensemble.get(event_date.isoformat())
     if not members:

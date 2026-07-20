@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backtest Results — Kalshi Weather Signals</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <main class="container page-body">
+    <div class="page-head">
+      <h1>Backtest results</h1>
+      <a class="back-link" href="{{ url_for('index') }}">← Back to dashboard</a>
+    </div>
+    <p class="page-subtitle" style="max-width:820px;margin-bottom:30px">How the prediction model is actually calibrated right now, and the independent checks behind it — not a one-time report, this reflects whatever the two scripts below last produced.</p>
+
+    {% if db_error %}
+    <div class="banner banner-warning">Can't reach the database right now: {{ db_error }}</div>
+    {% else %}
+
+    <div class="section-head">
+      <h4>Current calibration, per city</h4>
+      <span class="section-head-rule"></span>
+    </div>
+    <p class="section-note">
+      Each city's day-ahead ensemble forecast gets a bias correction before being turned into a
+      probability — either one flat number, or a different number per calendar month, whichever one
+      actually scored better on held-out data when last fit. Re-run with
+      <code>uv run scripts/fit_calibration_params.py</code> as more settled days accumulate.
+    </p>
+    {% if not calibration_run %}
+    <p class="empty">fit_calibration_params.py has never been run against this database.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>City</th><th>Metric</th><th>Using</th><th>Bias correction</th><th style="text-align:right">Spread (std)</th><th style="text-align:right">Fit days</th><th>Eval Brier (flat vs. monthly)</th></tr>
+        </thead>
+        <tbody>
+          {% for row in calibration_rows %}
+          <tr>
+            <td style="font-weight:600">{{ row.city }}</td>
+            <td>{{ row.metric_label }}</td>
+            <td><span class="status-badge status-{{ 'success' if row.using == 'monthly' else 'unknown' }}">{{ row.using }}</span></td>
+            <td class="tnum">
+              {% if row.using == 'monthly' %}
+              {{ "%+.2f°F"|format(row.monthly_bias_range[0]) }} to {{ "%+.2f°F"|format(row.monthly_bias_range[1]) }} across the year
+              {% else %}
+              {{ "%+.2f°F"|format(row.overall_bias) }} flat
+              {% endif %}
+            </td>
+            <td class="tnum" style="text-align:right">{{ "%.2f°F"|format(row.std) }}</td>
+            <td class="tnum {{ 'pnl-negative' if row.fit_days < 200 else '' }}" style="text-align:right">{{ row.fit_days }}</td>
+            <td class="tnum" style="color:var(--color-neutral-600);font-size:13px">
+              {% if row.flat_brier is not none %}
+              flat={{ "%.4f"|format(row.flat_brier) }},
+              monthly={{ "%.4f"|format(row.monthly_brier) }}
+              {% else %}
+              —
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="section-note">Last fit {{ calibration_run.started_at|pacific }}. Fit days varies
+      considerably by city and metric right now — the original 6 cities' High Temperature markets have
+      420+ settled days each; most of the rest have well under 150 (highlighted above). Lower Brier is
+      better — the bolded-in-practice choice per city is whichever number is smaller, which is exactly
+      what <code>using</code> reflects; with this little data for the newer markets, treat "monthly" there
+      as a weaker signal than the same label on a deeply-fit city.</p>
+    {% endif %}
+
+    <div class="section-head" style="margin-top:8px">
+      <h4>Independent settlement check (NOAA CDO)</h4>
+      <span class="section-head-rule"></span>
+    </div>
+    <p class="section-note">
+      Kalshi's own settlement result comes from the NWS Climatological Report — see each alert's
+      Settlement rules for the exact source per city. This is a second, independent check of whether
+      that settlement data itself is trustworthy: for every settled day, does NOAA's own station
+      reading fall inside the bracket Kalshi says won? Get a free token at
+      <a href="https://www.ncdc.noaa.gov/cdo-web/token" target="_blank" rel="noopener noreferrer">ncdc.noaa.gov/cdo-web/token</a>
+      and re-run with <code>uv run scripts/validate_against_noaa.py</code>.
+    </p>
+    {% if not noaa_run %}
+    <p class="empty">validate_against_noaa.py has never been run against this database.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>City</th><th style="text-align:right">Matched</th><th style="text-align:right">Mismatched</th><th style="text-align:right">No NOAA data</th></tr>
+        </thead>
+        <tbody>
+          {% for row in noaa_rows %}
+          <tr>
+            <td style="font-weight:600">{{ row.city }}</td>
+            <td class="tnum" style="text-align:right">{{ row.matched }}</td>
+            <td class="tnum {{ 'pnl-negative' if row.mismatched > 0 else '' }}" style="text-align:right">{{ row.mismatched }}{% if row.mismatched > 0 %} ⚠{% endif %}</td>
+            <td class="tnum" style="text-align:right">{{ row.no_noaa_data }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if noaa_mismatch_lines %}
+    <details class="rules">
+      <summary>{{ noaa_mismatch_lines|length }} mismatched day(s) — detail</summary>
+      {% for line in noaa_mismatch_lines %}
+      <p class="rules-secondary">{{ line }}</p>
+      {% endfor %}
+    </details>
+    {% endif %}
+    <p class="section-note">Last run {{ noaa_run.started_at|pacific }} —
+      {{ noaa_run.summary or '—' }}.
+      {% if noaa_run.status == 'partial' %}Marked partial, not failed — the script ran fine, this
+      just means it's worth a human glance at the mismatch(es) above.{% endif %}</p>
+    {% endif %}
+
+    {% endif %}
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

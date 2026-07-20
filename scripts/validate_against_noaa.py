@@ -23,8 +23,9 @@ instantly).
 
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 
 from dotenv import load_dotenv
@@ -146,13 +147,16 @@ def main() -> None:
         )
         if errored_cities:
             run.status = "partial" if (total_matched or total_mismatched) else "failed"
-            run.detail = f"NOAA request failed for: {', '.join(errored_cities)}"
         elif total_mismatched:
             # Not a script failure — it did its job finding a real
             # discrepancy — but worth flagging on /status rather than
             # blending into a plain "success" that invites skimming past it.
             run.status = "partial"
-            run.detail = f"{total_mismatched} day(s) where NOAA disagrees with Kalshi's settlement result"
+
+        # Structured, not just the error/mismatch-only prose above, so the
+        # dashboard's /backtest page can show the full per-city breakdown
+        # (including clean matches) without a human re-running the script.
+        run.detail = json.dumps([asdict(r) for r in results])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
-# Kalshi weather-signal pipeline: generate new alerts, then check pending
-# ones for settlement.
+# Kalshi weather-signal pipeline: generate new alerts, check pending ones for
+# settlement, run one cycle of the (simulated, real-money-free) paper-trading
+# bot, then notify.
 #
 # Runs ~4-5 hours after each GFS/ICON model init (00Z/06Z/12Z/18Z), giving
 # Open-Meteo time to ingest the new run before we poll it; ECMWF often lags
