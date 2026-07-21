@@ -208,3 +208,16 @@ create table if not exists forecast_previews (
 );
 
 create index if not exists forecast_previews_lookup_idx on forecast_previews (series_ticker, target_date, created_at desc);
+
+-- Added 2026-07-21 — master toggle for real-money trading, with audit log.
+-- Append-only: new rows record state changes with timestamp and reason, preserving
+-- full history of who enabled/disabled and when.
+create table if not exists trading_controls (
+    id bigint generated always as identity primary key,
+    real_money_trading_enabled boolean not null default false,
+    updated_at timestamptz not null default now(),
+    updated_by text,        -- who flipped it (e.g., session passcode label)
+    note text                -- why (e.g., "edge cleared Stage 1")
+);
+
+create index if not exists trading_controls_updated_at_idx on trading_controls (updated_at desc);

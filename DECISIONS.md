@@ -109,3 +109,44 @@ for *larger* model error here.
   work".
 
 Neither fired = the pause stands, no re-litigation needed.
+
+## Circuit breakers: THRESHOLDS SET — 2026-07-21
+
+Default limits (production-ready, Stage 3) are:
+- **Daily loss**: 10% of bankroll
+- **Consecutive losses**: 5 losing trades in a row
+
+Both validated against 82 historical paper trades (2026-07-01 to 2026-07-21):
+
+| Scenario | Daily Loss | Consecutive | Trips | Trips affect which days |
+| --- | --- | --- | --- | --- |
+| Conservative | 5% | 3 | 2 | 2026-07-19, 2026-07-20 |
+| Moderate (chosen) | 10% | 5 | 1 | 2026-07-20 |
+| Loose | 20% | 7 | 3 | 2026-07-19 (both), 2026-07-20 |
+
+The moderate thresholds catch both of the two largest loss days in the sample
+(-$112.86 on 2026-07-19 and -$69.24 on 2026-07-20) without being over-reactive.
+Conservative is unnecessarily permissive; loose adds no additional protection
+over moderate.
+
+**Edge case — negative bankroll**: When the account's cumulative losses exceed
+starting capital (bankroll ≤ 0), the daily-loss breaker returns `False`.
+This is intentional: negative bankroll is a catastrophic failure state that
+means the breaker should have fired on a *prior* day. Don't trigger false
+positives when today's positive P&L makes negative math invert the comparison
+direction. Covered by `test_negative_bankroll_returns_false` and
+`test_zero_bankroll_returns_false`.
+
+**Validation caveat — consecutive-loss threshold unproven**: The 5-loss
+threshold is *mechanically tested* (unit tests cover all paths: no trades,
+all wins, exact limits, win-resets-streak, open positions ignored) but not
+*empirically validated* in this data. The 82-trade sample has no streaks ≥ 5
+losses; the longest is 2 consecutive. This is a data-scarcity issue, not a
+logic flaw — consecutive-loss breaker is sound in design but should be
+re-validated against a larger or longer-running paper-trade sample before
+fully trusting it in production.
+
+Breakers are built but **not wired into paper_trading.py entries** until Stage 2
+(60+ days, 300+ trades) and Stage 1 (forward-validated edge) clear. Code is in
+`risk/circuit_breakers.py` with unit tests in `tests/test_circuit_breakers.py`
+and historical validation in `scripts/validate_circuit_breakers.py`.
