@@ -390,6 +390,7 @@ _KNOWN_SCRIPTS = [
     "run_paper_trading",
     "send_notifications",
     "fit_calibration_params",
+    "refresh_same_day_observations",
 ]
 # Two different cadences, not one — added 2026-07-20 after a real gap this
 # single flat threshold hid: generate_alerts/send_notifications still run via
@@ -415,6 +416,11 @@ _STALE_AFTER: dict[str, timedelta] = {
     "mark_settled_alerts": timedelta(minutes=30),
     "run_paper_trading": timedelta(minutes=30),
     "fit_calibration_params": timedelta(days=9),
+    # Same 15m cadence and 2x-cadence margin as mark_settled_alerts/
+    # run_paper_trading above, added 2026-07-20 alongside
+    # scheduler/run_observation_refresh.sh for the same reason: a job nothing
+    # watches is a job whose cron entry can silently stop firing.
+    "refresh_same_day_observations": timedelta(minutes=30),
 }
 _DEFAULT_STALE_AFTER = timedelta(hours=8)
 # The cadence each script is actually scheduled at (scheduler/*.sh) — distinct
@@ -429,6 +435,7 @@ _CADENCE = {
     # A duration, not the word "weekly" — the template renders this as
     # "Expected every {x}", so a bare adverb produced "Expected every weekly".
     "fit_calibration_params": "7d",
+    "refresh_same_day_observations": "15m",
 }
 
 

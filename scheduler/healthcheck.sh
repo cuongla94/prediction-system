@@ -34,6 +34,7 @@
 #        HEALTHCHECK_PIPELINE_URL=https://hc-ping.com/<uuid>       period 6h,  grace 2h
 #        HEALTHCHECK_SETTLEMENT_URL=https://hc-ping.com/<uuid>     period 15m, grace 15m
 #        HEALTHCHECK_RECALIBRATION_URL=https://hc-ping.com/<uuid>  period 7d,  grace 1d
+#        HEALTHCHECK_OBSERVATION_REFRESH_URL=https://hc-ping.com/<uuid>  period 15m, grace 15m
 #   3. Point the check's alert at email/SMS in healthchecks.io's own settings.
 # .env is gitignored, so these URLs never reach the public repo.
 

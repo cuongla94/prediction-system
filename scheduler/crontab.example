@@ -27,6 +27,15 @@
 
 0 5,11,17,23 * * * /path/to/kalshi-prediction-market/scheduler/run_pipeline.sh >> /path/to/kalshi-prediction-market/logs/pipeline.log 2>&1
 */15 * * * * /path/to/kalshi-prediction-market/scheduler/run_settlement_cycle.sh >> /path/to/kalshi-prediction-market/logs/settlement_cycle.log 2>&1
+# Same-day observation refresh — added 2026-07-20 after scripts/measure_
+# pipeline_latency.py found a real, measured Brier cost from the 6-hourly
+# cadence above being the only thing that ever refreshed observed_so_far (see
+# run_observation_refresh.sh for the full reasoning and numbers). 15 minutes,
+# matching the settlement cycle's own precedent — comfortably tighter than
+# the hourly METAR cadence this is trying to keep pace with, and cheap for
+# the same reason: no Open-Meteo refetch, just one NWS call + one Kalshi
+# get_markets() call per city.
+*/15 * * * * /path/to/kalshi-prediction-market/scheduler/run_observation_refresh.sh >> /path/to/kalshi-prediction-market/logs/observation_refresh.log 2>&1
 # Weekly re-fit of the bias/std calibration (see run_recalibration.sh for why
 # weekly rather than daily). Sunday 09:00 UTC = 01:00/02:00 Pacific, chosen to
 # sit well clear of the 05/11/17/23 pipeline slots so the two never contend for

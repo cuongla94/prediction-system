@@ -28,13 +28,13 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from edge.calculator import bracket_sum_deviation, compute_edge
-from kalshi_client import KalshiClient, market_url, parse_event_date
+from kalshi_client import Event, KalshiClient, Market, market_url, parse_event_date
 from monitoring import track_run
 from weather.calibration_params import get_calibration
 from weather.nws_observations import fetch_today_extreme
@@ -45,6 +45,90 @@ from weather.probability import (
     fit_normal,
 )
 from weather.stations import STATIONS
+
+
+def price_bracket(
+    *,
+    series_ticker: str,
+    city: str,
+    event: Event,
+    market: Market,
+    ensemble_mean: float,
+    ensemble_std: float,
+    event_date: date,
+    lead_days: int,
+    metric: str,
+    observed_so_far: float | None,
+    kalshi_url: str,
+) -> dict | None:
+    """Prices one bracket into a full `alerts` row dict, or None if it should
+    be skipped (no bid/ask yet, or the rules text doesn't match the strikes).
+
+    Split out of build_alert_rows() 2026-07-20 so
+    scripts/refresh_same_day_observations.py can reuse the EXACT same pricing
+    logic on a much tighter cadence without duplicating it — see that
+    script's own docstring for why a separate, tighter-cadence refresh exists
+    at all (measured, not assumed: scripts/measure_pipeline_latency.py found
+    a real, measurable Brier cost from this project's 6-hourly cadence,
+    concentrated at the decision times furthest past the last cron tick).
+    Keeping one function here is what stops the two callers from silently
+    drifting apart on how a bracket gets priced.
+
+    `observed_so_far` is the day's raw observed extreme (or None) — the
+    lead_days==0-only gating that decides whether it's actually used stays
+    here, unchanged from before the extraction, so a lead_days=1 (or later)
+    call is guaranteed to price identically to before regardless of what its
+    caller passes for `observed_so_far`.
+    """
+    if market.yes_bid_dollars is None or market.yes_ask_dollars is None:
+        return None
+    try:
+        check_boundary_language(market.rules_primary, market.floor_strike, market.cap_strike)
+    except ValueError as exc:
+        print(f"  WARNING: {market.ticker}: {exc} — skipping this bracket.")
+        return None
+
+    # Only today's event can have an observation to condition on; anything
+    # further out prices exactly as before regardless of what was passed in.
+    bracket_observation = observed_so_far if lead_days == 0 else None
+    model_probability = calibrated_observation_conditioned_probability(
+        series_ticker,
+        ensemble_mean,
+        market.floor_strike,
+        market.cap_strike,
+        event_date.month,
+        metric,
+        bracket_observation,
+    )
+    market_price = round((market.yes_bid_dollars + market.yes_ask_dollars) / 2, 4)
+    edge_result = compute_edge(model_probability, market_price)
+
+    return dict(
+        series_ticker=series_ticker,
+        event_ticker=event.event_ticker,
+        market_ticker=market.ticker,
+        city=city,
+        bracket_label=market.bracket_label,
+        floor_strike=market.floor_strike,
+        cap_strike=market.cap_strike,
+        model_probability=model_probability,
+        ensemble_mean=ensemble_mean,
+        ensemble_std=ensemble_std,
+        observed_so_far=bracket_observation,
+        model_version="normal-v4-observation-conditioned",
+        calibration_validated=False,
+        market_yes_price=market_price,
+        edge=edge_result.edge,
+        fee_adjusted_threshold=edge_result.threshold,
+        rules_primary=market.rules_primary,
+        rules_secondary=market.rules_secondary or None,
+        kalshi_url=kalshi_url,
+        is_actionable=edge_result.is_actionable,
+        status="open",
+        close_time=market.close_time,
+        metric=metric,
+        lead_days=lead_days,
+    )
 
 
 def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dict], list[dict]]:
@@ -137,58 +221,23 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
         rows: list[dict] = []
         market_prices: list[float] = []
         for market in markets:
-            if market.yes_bid_dollars is None or market.yes_ask_dollars is None:
-                continue
-            try:
-                check_boundary_language(market.rules_primary, market.floor_strike, market.cap_strike)
-            except ValueError as exc:
-                print(f"  WARNING: {market.ticker}: {exc} — skipping this bracket.")
-                continue
-
-            # Only today's event can have an observation to condition on;
-            # anything further out passes None and prices exactly as before.
-            bracket_observation = observed_so_far if lead_days == 0 else None
-            model_probability = calibrated_observation_conditioned_probability(
-                series_ticker,
-                mean,
-                market.floor_strike,
-                market.cap_strike,
-                event_date.month,
-                station.metric,
-                bracket_observation,
+            row = price_bracket(
+                series_ticker=series_ticker,
+                city=station.city,
+                event=event,
+                market=market,
+                ensemble_mean=mean,
+                ensemble_std=std,
+                event_date=event_date,
+                lead_days=lead_days,
+                metric=station.metric,
+                observed_so_far=observed_so_far,
+                kalshi_url=kalshi_link,
             )
-            market_price = round((market.yes_bid_dollars + market.yes_ask_dollars) / 2, 4)
-            market_prices.append(market_price)
-            edge_result = compute_edge(model_probability, market_price)
-
-            rows.append(
-                dict(
-                    series_ticker=series_ticker,
-                    event_ticker=event.event_ticker,
-                    market_ticker=market.ticker,
-                    city=station.city,
-                    bracket_label=market.bracket_label,
-                    floor_strike=market.floor_strike,
-                    cap_strike=market.cap_strike,
-                    model_probability=model_probability,
-                    ensemble_mean=mean,
-                    ensemble_std=std,
-                    observed_so_far=bracket_observation,
-                    model_version="normal-v4-observation-conditioned",
-                    calibration_validated=False,
-                    market_yes_price=market_price,
-                    edge=edge_result.edge,
-                    fee_adjusted_threshold=edge_result.threshold,
-                    rules_primary=market.rules_primary,
-                    rules_secondary=market.rules_secondary or None,
-                    kalshi_url=kalshi_link,
-                    is_actionable=edge_result.is_actionable,
-                    status="open",
-                    close_time=market.close_time,
-                    metric=station.metric,
-                    lead_days=lead_days,
-                )
-            )
+            if row is None:
+                continue
+            rows.append(row)
+            market_prices.append(row["market_yes_price"])
 
         deviation = bracket_sum_deviation(market_prices)
         print(
