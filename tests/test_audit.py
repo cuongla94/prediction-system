@@ -11,7 +11,12 @@ from audit.checks_pipeline import (
     check_schema_drift,
     check_stuck_runs,
 )
-from audit.checks_security import check_decision_log, check_disk_and_memory, check_permissions
+from audit.checks_security import (
+    check_basic_auth_patterns,
+    check_decision_log,
+    check_disk_and_memory,
+    check_permissions,
+)
 from audit.report import Finding, Status, render_report
 
 NOW = datetime.now(UTC)
@@ -241,3 +246,49 @@ def test_decision_log_checks_the_real_repo_file():
 
 def test_decision_log_missing_file_is_unknown(tmp_path):
     assert check_decision_log(tmp_path / "nope.md").status is Status.UNKNOWN
+
+
+def test_basic_auth_check_is_unknown_when_nginx_has_no_auth_basic(tmp_path):
+    # nginx's basic-auth layer was removed 2026-07-21 in favor of the
+    # dashboard's own passcode gate. Without auth_basic configured, nginx's
+    # access log status codes no longer distinguish real login outcomes from
+    # ordinary traffic -- this must not silently compute a misleading number.
+    conf = tmp_path / "kalshi-dashboard"
+    conf.write_text("server {\n    listen 80;\n    location / { proxy_pass http://127.0.0.1:8000; }\n}\n")
+    log = tmp_path / "access.log"
+    log.write_text('1.2.3.4 - - [21/Jul/2026:10:00:00 +0000] "GET / HTTP/1.1" 302 0\n')
+    finding = check_basic_auth_patterns(log_path=log, nginx_conf_path=conf)
+    assert finding.status is Status.UNKNOWN
+    assert "auth_basic" in finding.summary
+
+
+def test_basic_auth_check_missing_nginx_conf_is_unknown(tmp_path):
+    finding = check_basic_auth_patterns(log_path=tmp_path / "access.log", nginx_conf_path=tmp_path / "nope.conf")
+    assert finding.status is Status.UNKNOWN
+
+
+def test_basic_auth_check_flags_multiple_authenticated_ips_when_auth_basic_present(tmp_path):
+    conf = tmp_path / "kalshi-dashboard"
+    conf.write_text('server {\n    auth_basic "x";\n    auth_basic_user_file /etc/nginx/.htpasswd;\n}\n')
+    log = tmp_path / "access.log"
+    log.write_text(
+        '1.1.1.1 - - [21/Jul/2026:10:00:00 +0000] "GET / HTTP/1.1" 200 0\n'
+        '2.2.2.2 - - [21/Jul/2026:10:01:00 +0000] "GET / HTTP/1.1" 200 0\n'
+        '3.3.3.3 - - [21/Jul/2026:10:02:00 +0000] "GET / HTTP/1.1" 200 0\n'
+        '9.9.9.9 - - [21/Jul/2026:10:03:00 +0000] "GET / HTTP/1.1" 401 0\n'
+    )
+    finding = check_basic_auth_patterns(log_path=log, nginx_conf_path=conf)
+    assert finding.status is Status.FLAG
+    assert "3 distinct IPs" in finding.summary
+
+
+def test_basic_auth_check_passes_single_ip_when_auth_basic_present(tmp_path):
+    conf = tmp_path / "kalshi-dashboard"
+    conf.write_text('server {\n    auth_basic "x";\n    auth_basic_user_file /etc/nginx/.htpasswd;\n}\n')
+    log = tmp_path / "access.log"
+    log.write_text(
+        '1.1.1.1 - - [21/Jul/2026:10:00:00 +0000] "GET / HTTP/1.1" 200 0\n'
+        '9.9.9.9 - - [21/Jul/2026:10:01:00 +0000] "GET / HTTP/1.1" 401 0\n'
+    )
+    finding = check_basic_auth_patterns(log_path=log, nginx_conf_path=conf)
+    assert finding.status is Status.PASS

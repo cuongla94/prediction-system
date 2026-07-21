@@ -38,6 +38,34 @@ Distinct from session expiry, which *was* actioned: sessions expire after 5 days
 of inactivity, enforced both by the cookie's `Expires` and independently by
 Flask's `max_age` when unsealing.
 
+**UPDATE 2026-07-21 — this decision's original justification no longer holds.**
+nginx basic auth was removed (see "Login: PASSCODES-only" below), so the
+6-digit passcode form is now the *only* barrier, with no throttle behind it.
+Left as-is because the change was explicitly requested and this remains
+single-user/low-value-target per the TLS acceptance above, but flagging
+plainly rather than quietly carrying a stale rationale: a brute-force of a
+6-digit numeric space (1,000,000 combinations) is trivial without a rate
+limit if this dashboard is ever probed with intent, not just the opportunistic
+scanners seen so far. Revisit if that scanning traffic starts hitting `/login`
+specifically, or add `limit_req` in nginx as a cheap follow-up.
+
+## Login: PASSCODES-only, nginx basic auth removed — 2026-07-21
+
+Reverted `/etc/nginx/sites-available/kalshi-dashboard` (droplet only, not
+repo-tracked) to drop `auth_basic`/`auth_basic_user_file`, at the user's
+request to go back to a single passcode-based login instead of stacking
+nginx's username+password in front of it. The dashboard's own `_valid_passcodes()`
+gate (`dashboard/app.py`) is unchanged and is now the sole barrier: 6-digit
+codes, comma-separated in `PASSCODES` (already in that format on the droplet,
+no `.env` change needed).
+
+Old config backed up on the droplet at
+`/root/kalshi-dashboard.nginx.bak.20260721-131628` before editing (reversible).
+Verified after reload: unauthenticated request → 302 to `/login` (was 401
+before), wrong passcode → 200 with error (re-shown form), correct passcode →
+302 then 200 on the dashboard — confirmed both over the loopback and from the
+public IP.
+
 ## Trading-mechanics work: PAUSED — 2026-07-20
 
 No changes to `paper_trading/`, `scripts/run_paper_trading.py`, position sizing,

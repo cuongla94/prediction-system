@@ -192,13 +192,42 @@ def check_dependency_cves(lock_path: Path, *, timeout: int = 30) -> Finding:
     )
 
 
-def check_basic_auth_patterns(log_path=Path("/var/log/nginx/access.log")) -> Finding:
+def check_basic_auth_patterns(
+    log_path=Path("/var/log/nginx/access.log"),
+    nginx_conf_path=Path("/etc/nginx/sites-available/kalshi-dashboard"),
+) -> Finding:
     """Unusual basic-auth activity in nginx's access log.
 
     Looks for successful (non-401) requests from unfamiliar sources — scanners
     getting 401s are constant background noise and are NOT interesting; someone
     getting through is.
+
+    nginx's basic auth layer was removed 2026-07-21 (see DECISIONS.md) in favor
+    of the dashboard's own passcode gate. Without `auth_basic` configured,
+    nginx no longer distinguishes authenticated from rejected requests — every
+    request it proxies gets a 2xx/3xx from the app regardless of whether the
+    passcode was right, so counting non-401s as "authenticated" would silently
+    mislabel ordinary scanner traffic as successful logins every week. Report
+    UNKNOWN rather than compute a number that no longer means what it says.
     """
+    try:
+        conf_text = nginx_conf_path.read_text(errors="replace")
+    except OSError as exc:
+        return Finding(
+            CATEGORY_SECURITY, "Basic-auth access patterns", Status.UNKNOWN,
+            f"Could not read {nginx_conf_path} ({exc.__class__.__name__}) to confirm whether "
+            "nginx auth_basic is configured — run as root for this check.",
+        )
+    if "auth_basic" not in conf_text:
+        return Finding(
+            CATEGORY_SECURITY, "Basic-auth access patterns", Status.UNKNOWN,
+            f"{nginx_conf_path} has no auth_basic directive — nginx is not performing "
+            "authentication, so its access log status codes no longer distinguish real "
+            "login outcomes. Login attempts are gated at the application layer "
+            "(dashboard's PASSCODES) instead; this check has nothing meaningful to report "
+            "until an nginx-level auth layer exists again.",
+        )
+
     try:
         lines = log_path.read_text(errors="replace").splitlines()
     except OSError as exc:
