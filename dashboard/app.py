@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 import httpx
 from dotenv import load_dotenv
 from flask import Flask, redirect, render_template, request, session, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from edge.calculator import bracket_sum_deviation
 from kalshi_client import KalshiAuthError, KalshiClient, Position, market_url, parse_event_date
@@ -59,9 +61,8 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 #
 # 5 days is a judgement call inside the 3-7 day band: long enough not to nag a
 # near-daily user, short enough that a session forgotten on a borrowed or lost
-# device does not stay valid for weeks. Deliberately NOT a substitute for
-# brute-force rate limiting on the login form, which is skipped separately
-# because nginx basic auth already fronts it.
+# device does not stay valid for weeks. Paired with rate limiting on the login
+# form (see limiter setup below) to cap brute-force attacks.
 app.permanent_session_lifetime = timedelta(days=5)
 # Lax, not None: the session cookie shouldn't ride along on cross-site requests.
 # There are no state-changing trading actions exposed here (this dashboard is
@@ -72,6 +73,34 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # (no domain, so no Let's Encrypt cert), and setting Secure would stop the
 # cookie being sent at all, breaking login entirely. This is a symptom of the
 # no-TLS posture, not an independent choice — flip it the moment TLS lands.
+
+# Rate limiting on the login route to prevent brute-force attacks. Uses Redis
+# (already live for other purposes) as the storage backend. Initialized with
+# default in-memory fallback if Redis is unavailable. Limit: 10 POST attempts
+# per minute per IP, allowing normal login retries while blocking rapid automated
+# attempts. Updated 2026-07-21 when nginx basic auth was removed — that layer is
+# no longer in front of the login form, so app-level throttling is now essential.
+# Tests disable rate limiting via app.config["RATELIMIT_ENABLED"] to avoid
+# inter-test interference from shared IP address context.
+try:
+    import redis
+    redis_client = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost"))
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        storage_uri=os.environ.get("REDIS_URL", "redis://localhost"),
+        default_limits=["200 per day", "50 per hour"],
+        in_memory_fallback_enabled=True,
+    )
+except Exception:
+    # Fallback: in-memory storage if Redis is unavailable. This is degraded but
+    # functional for single-process dev/test; production should ensure Redis is up.
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=["200 per day", "50 per hour"],
+        in_memory_fallback_enabled=True,
+    )
 
 
 def _valid_passcodes() -> set[str]:
@@ -108,6 +137,7 @@ def _require_login():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def login():
     error = None
     if request.method == "POST":

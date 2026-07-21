@@ -91,17 +91,15 @@ DEFAULT_HOLD_NEAR_SETTLEMENT_MINUTES = 30.0
 
 # Fraction of the *total* bankroll (starting + all-time realized P&L, not
 # just currently-idle cash — see deployable_cash) permanently held back from
-# new positions. Added 2026-07-19 after the bot spent every cent of a $100
-# reset within a single cycle, then a second, correlated batch (one night's
-# Low Temperature brackets across many cities) put it deep underwater again
-# with nothing left to fund anything else. A handful of correlated city-day
-# bets is not a large sample (see the original 0/57 loss) — some batches will
-# go badly by chance, and with zero reserve one bad night can fully exhaust
-# the bankroll in one shot, exactly as already happened twice. 25% is a
-# round, moderately conservative starting point, not derived from a
-# backtest — configurable so it can be tuned once there's real data on how
-# often "the whole reserve would have been needed."
-DEFAULT_CASH_RESERVE_FRACTION = 0.25
+# new positions. Set to 0.0 as of 2026-07-21 — paper trading only, no real
+# money at risk. The 25% reserve added 2026-07-19 was a safety mechanism for
+# a system under development; with the validation bar still FAILED and no
+# circuit breakers yet, holding reserves that limit testability is
+# counterproductive. Configurable so it can be re-tuned if/when conditions
+# change. IMPORTANT: if this system ever runs on real money, this must be
+# revisited with the validation bar's own preconditions — do not treat a
+# paper-trading-only choice as safe for capital deployment.
+DEFAULT_CASH_RESERVE_FRACTION = 0.0
 
 # By the time a market is still open on the day its own bracket settles,
 # part of that day's high/low is often already realized — the temperature

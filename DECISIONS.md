@@ -66,6 +66,18 @@ before), wrong passcode → 200 with error (re-shown form), correct passcode →
 302 then 200 on the dashboard — confirmed both over the loopback and from the
 public IP.
 
+## Cash reserve: REMOVED (0%) — 2026-07-21
+
+Paper-trading bot is now allowed to deploy 100% of available cash, not 25%.
+
+Initially added 2026-07-19 as a safety mechanism after a $100 reset was fully depleted by correlated city-day bets in a single cycle. The reserve's intent was sound — some batches will lose money by chance, and without a reserve, one bad night could exhaust the bankroll with nothing left to fund anything else.
+
+**Removed** on 2026-07-21 because the system is still under development (validation bar FAILED, no circuit breakers), and reserves that aren't being tested are counterproductive. The reserve's primary purpose — preventing total wipeout — is less relevant in a paper-trading simulation where the goal is to gather evidence about real performance, not to preserve capital.
+
+**Critical caveat for real money**: if this system ever runs on real capital, `DEFAULT_CASH_RESERVE_FRACTION` must be revisited as part of the validation bar's preconditions and risk-management setup. A 0% reserve is acceptable *only* because no real money is at stake and the system is incomplete (no circuit breakers, still-failing validation gate). This is NOT a decision to blindly carry forward.
+
+Configurable via `PAPER_TRADING_CASH_RESERVE_FRACTION` env var if a reserve is needed in future runs.
+
 ## Trading-mechanics work: PAUSED — 2026-07-20
 
 No changes to `paper_trading/`, `scripts/run_paper_trading.py`, position sizing,

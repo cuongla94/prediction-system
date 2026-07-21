@@ -386,9 +386,10 @@ def test_leaves_position_alone_when_not_yet_settled():
 # --- deployable_cash ---
 
 
-def test_holds_back_the_default_reserve_fraction():
-    # Fresh bankroll, nothing deployed yet: 25% of $100 held back by default.
-    assert deployable_cash(100.0, 100.0) == pytest.approx(75.0)
+def test_default_reserve_is_zero():
+    # Fresh bankroll, nothing deployed yet: default reserve is 0% as of 2026-07-21
+    # (paper-trading only, not for real money). Everything is deployable.
+    assert deployable_cash(100.0, 100.0) == pytest.approx(100.0)
 
 
 def test_custom_reserve_fraction_overrides_the_default():
