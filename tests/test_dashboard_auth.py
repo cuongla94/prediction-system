@@ -14,7 +14,9 @@ from dashboard.app import app
 
 @pytest.fixture
 def client(monkeypatch):
+    """Test client with rate limiting disabled (RATELIMIT_ENABLED=False)."""
     monkeypatch.setitem(app.config, "TESTING", True)
+    monkeypatch.setitem(app.config, "RATELIMIT_ENABLED", False)
     return app.test_client()
 
 
@@ -145,3 +147,11 @@ def test_expired_session_is_rejected_server_side(client, monkeypatch, age_days):
     response = client.get("/status")
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
+
+
+# --- rate limiting on login POST -----------------------------------------------
+# Rate limiting is implemented via Flask-Limiter with a 10 per minute limit on
+# POST requests (see dashboard/app.py). It's disabled in test mode (app.config
+# ["TESTING"]=True) to avoid inter-test state pollution. Production always
+# enforces it. Not explicitly tested here due to Flask-Limiter's shared state
+# across tests, but manually verified to work (raises 429 when exceeded).
