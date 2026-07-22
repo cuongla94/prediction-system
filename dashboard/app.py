@@ -76,10 +76,20 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # Rate limiting on the login route to prevent brute-force attacks. Uses Redis
 # (already live for other purposes) as the storage backend. Initialized with
-# default in-memory fallback if Redis is unavailable. Limit: 10 POST attempts
+# default in-memory fallback if Redis is unavailable. The actual throttle is the
+# explicit `@limiter.limit("10 per minute")` on the login POST below — 10 attempts
 # per minute per IP, allowing normal login retries while blocking rapid automated
 # attempts. Updated 2026-07-21 when nginx basic auth was removed — that layer is
 # no longer in front of the login form, so app-level throttling is now essential.
+#
+# NO `default_limits` here, deliberately: a global cap applies to EVERY route,
+# including the read-only dashboard pages and the in-place refresh calls they
+# make on a timer. A single user leaving /paper-trading open would silently
+# exhaust "200 per day" / "50 per hour" and get served flask-limiter's own
+# "Too Many Requests / 200 per 1 day" error on their own dashboard (observed
+# live 2026-07-22). Brute-force protection belongs only on the login route,
+# which has it explicitly — the rest of the dashboard is behind the passcode
+# gate and reading it more than 200x/day is normal, not an attack.
 # Tests disable rate limiting via app.config["RATELIMIT_ENABLED"] to avoid
 # inter-test interference from shared IP address context.
 try:
@@ -89,7 +99,6 @@ try:
         app=app,
         key_func=get_remote_address,
         storage_uri=os.environ.get("REDIS_URL", "redis://localhost"),
-        default_limits=["200 per day", "50 per hour"],
         in_memory_fallback_enabled=True,
     )
 except Exception:
@@ -98,7 +107,6 @@ except Exception:
     limiter = Limiter(
         app=app,
         key_func=get_remote_address,
-        default_limits=["200 per day", "50 per hour"],
         in_memory_fallback_enabled=True,
     )
 
