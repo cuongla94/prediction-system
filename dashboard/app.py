@@ -1000,43 +1000,40 @@ def _fetch_prices_via_rest(tickers: list[str]) -> dict[str, float]:
     if not tickers:
         return {}
 
-    def fetch_one(client: KalshiClient, ticker: str) -> tuple[str, float | None]:
-        try:
-            market = client.get_market(ticker)
-            # A market with trading closed (status != "active" — Kalshi's
-            # real live-trading value; "open" never actually occurs, see
-            # below) — e.g. the settlement result just hasn't posted yet —
-            # returns a degenerate yes_bid=0.0/yes_ask=1.0 rather than
-            # None/None. That's not a real quote (midpoint 0.50 for a
-            # position that was actually trading near 0), so treat
-            # not-actively-trading the same as "no quote" rather than
-            # trusting whatever bid/ask values are present.
-            #
-            # Real bug, live 2026-07-19: this previously
-            # checked `status != "open"`, based on an assumption that was
-            # only ever verified against a *closed* market (which correctly
-            # showed status="closed") and never against a genuinely live one.
-            # A live market's real status is "active", not "open" — Kalshi's
-            # full enum is initialized/inactive/active/closed/determined/
-            # disputed/amended/finalized, confirmed against both a live
-            # market (status="active", real bid/ask) and the official API
-            # docs. The old check matched *zero* real markets, so every REST
-            # fallback silently returned no quote — the Redis/WebSocket cache
-            # (added the same day, see price_feed/) partially masked this by
-            # covering most positions, but anything the cache missed showed
-            # "no live quote" instead of a real price, not just for
-            # genuinely-closed markets as intended.
-            if market.status != "active" or market.yes_bid_dollars is None or market.yes_ask_dollars is None:
-                return ticker, None
-            return ticker, round((market.yes_bid_dollars + market.yes_ask_dollars) / 2, 4)
-        except Exception as exc:
-            print(f"  live price fetch failed for {ticker}: {exc.__class__.__name__}: {exc}")
-            return ticker, None
+    # Extract unique series_tickers from market tickers (e.g., "KXHIGHNY-26JUL20-B79.5" → "KXHIGHNY")
+    series_tickers = set()
+    for ticker in tickers:
+        series_ticker = ticker.split("-")[0]
+        series_tickers.add(series_ticker)
 
-    with KalshiClient() as client:
-        with ThreadPoolExecutor(max_workers=min(10, len(tickers))) as executor:
-            results = executor.map(lambda t: fetch_one(client, t), tickers)
-    return {ticker: price for ticker, price in results if price is not None}
+    results = {}
+    try:
+        with KalshiClient() as client:
+            for series_ticker in series_tickers:
+                # Fetch all markets for this series in one call, then filter to only the ones we need
+                markets, _ = client.get_markets(series_ticker=series_ticker, limit=200)
+                for market in markets:
+                    if market.ticker in tickers:
+                        # A market with trading closed (status != "active" — Kalshi's
+                        # real live-trading value; "open" never actually occurs, see
+                        # below) — e.g. the settlement result just hasn't posted yet —
+                        # returns a degenerate yes_bid=0.0/yes_ask=1.0 rather than
+                        # None/None. That's not a real quote (midpoint 0.50 for a
+                        # position that was actually trading near 0), so treat
+                        # not-actively-trading the same as "no quote" rather than
+                        # trusting whatever bid/ask values are present.
+                        if (
+                            market.status == "active"
+                            and market.yes_bid_dollars is not None
+                            and market.yes_ask_dollars is not None
+                        ):
+                            results[market.ticker] = round(
+                                (market.yes_bid_dollars + market.yes_ask_dollars) / 2, 4
+                            )
+    except Exception as exc:
+        print(f"  live price fetch failed: {exc.__class__.__name__}: {exc}")
+
+    return results
 
 
 def _mark_to_market(trade: PaperTrade, current_prices: dict[str, float]) -> tuple[float, float | None]:
