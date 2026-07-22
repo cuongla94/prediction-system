@@ -179,7 +179,7 @@ def main():
         print()
 
         if trip_events:
-            print(f"  Trip events:")
+            print("  Trip events:")
             for event in trip_events[:5]:  # Show first 5
                 print(f"    • {event['date']}: {event['reason']}")
             if len(trip_events) > 5:

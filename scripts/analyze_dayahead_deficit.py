@@ -22,7 +22,6 @@ Methodology:
 
 from __future__ import annotations
 
-from collections import defaultdict
 import numpy as np
 
 from backtest.cache import cached_collect_rows
@@ -42,7 +41,7 @@ def analyze_dayahead_deficit():
     print("DAY-AHEAD DEFICIT INVESTIGATION (PROPER DATA-DRIVEN APPROACH)")
     print("=" * 120)
     print(f"Window: {PROOF_WINDOW_START} to {PROOF_WINDOW_END} (18 days)")
-    print(f"Decision point: Midnight local standard time (lead_days=1, zero same-day observations)")
+    print("Decision point: Midnight local standard time (lead_days=1, zero same-day observations)")
     print(f"Cities: {', '.join(TEST_CITIES)}")
     print()
 
@@ -78,7 +77,7 @@ def analyze_dayahead_deficit():
                 rows = [r for r in eval_rows if r.target_date in proof_set]
 
             if not rows:
-                print(f"  No data collected")
+                print("  No data collected")
                 continue
 
             n = len(rows)
@@ -146,7 +145,7 @@ def analyze_dayahead_deficit():
                         'forecast_spreads': [row.forecast_spread for row in rows],
                     }
             else:
-                print(f"  No matched prices (can't score)")
+                print("  No matched prices (can't score)")
 
         except Exception as e:
             import traceback

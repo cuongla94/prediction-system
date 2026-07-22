@@ -99,7 +99,7 @@ def main():
                 rows = [r for r in eval_rows if r.target_date in proof_set]
 
             if not rows:
-                print(f"  No data collected")
+                print("  No data collected")
                 continue
 
             # Group rows by target date and extract the forecast_spread (cross-model disagreement)
@@ -141,18 +141,18 @@ def main():
                 })
 
             if not comparison_results:
-                print(f"  No days with complete bracket data")
+                print("  No days with complete bracket data")
                 continue
 
             # Summary statistics
             print(f"  {len(comparison_results)} days with complete bracket data")
             print()
-            print(f"  Cross-model disagreement (ensemble spread):")
+            print("  Cross-model disagreement (ensemble spread):")
             print(f"    Mean: {np.mean(cross_model_spreads):.3f}F")
             print(f"    Std:  {np.std(cross_model_spreads):.3f}F")
             print(f"    Range: [{np.min(cross_model_spreads):.3f}F, {np.max(cross_model_spreads):.3f}F]")
             print()
-            print(f"  Market-implied spread (from bracket prices):")
+            print("  Market-implied spread (from bracket prices):")
             print(f"    Mean: {np.mean(market_implied_stds):.3f}F")
             print(f"    Std:  {np.std(market_implied_stds):.3f}F")
             print(f"    Range: [{np.min(market_implied_stds):.3f}F, {np.max(market_implied_stds):.3f}F]")
@@ -162,17 +162,17 @@ def main():
             ratios = [r['ratio'] for r in comparison_results if r['ratio'] is not None]
             if ratios:
                 mean_ratio = np.mean(ratios)
-                print(f"  Market/Ensemble spread ratio:")
+                print("  Market/Ensemble spread ratio:")
                 print(f"    Mean ratio: {mean_ratio:.3f}")
                 if mean_ratio < 0.95:
                     print(f"    → Market is TIGHTER (ratio {mean_ratio:.3f} < 1.0)")
-                    print(f"    → This SUPPORTS the ensemble-spread hypothesis")
+                    print("    → This SUPPORTS the ensemble-spread hypothesis")
                 elif mean_ratio > 1.05:
                     print(f"    → Market is WIDER (ratio {mean_ratio:.3f} > 1.0)")
-                    print(f"    → This CONTRADICTS the ensemble-spread hypothesis")
+                    print("    → This CONTRADICTS the ensemble-spread hypothesis")
                 else:
                     print(f"    → Market and ensemble spreads are SIMILAR (ratio {mean_ratio:.3f} ≈ 1.0)")
-                    print(f"    → Spread difference does NOT explain the gap")
+                    print("    → Spread difference does NOT explain the gap")
                 print()
 
             # Correlation with errors (follow up if hypothesis looks promising)
@@ -202,12 +202,12 @@ def main():
                     daily_errors = [np.mean(errors_by_date[r['date']]) for r in comparison_results if r['date'] in errors_by_date]
                     if len(spreads_for_corr) == len(daily_errors):
                         correlation, p_value = stats.pearsonr(spreads_for_corr, daily_errors)
-                        print(f"  Correlation: market-implied spread vs market error")
+                        print("  Correlation: market-implied spread vs market error")
                         print(f"    r = {correlation:.3f}, p-value = {p_value:.4f}")
                         if p_value < 0.05:
-                            print(f"    → SIGNIFICANT correlation (p < 0.05)")
+                            print("    → SIGNIFICANT correlation (p < 0.05)")
                         else:
-                            print(f"    → No significant correlation (p >= 0.05)")
+                            print("    → No significant correlation (p >= 0.05)")
 
             results_by_city[series_ticker] = {
                 'n_days': len(comparison_results),
