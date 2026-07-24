@@ -93,6 +93,28 @@ else
   crontab -u "$APP_USER" "$rendered" || fail "crontab install failed"
 fi
 
+# --- Systemd units ---------------------------------------------------------
+# setup.sh installs these units on first provision, but later tracked changes
+# must also reach /etc/systemd/system. Without this step a deploy can restart a
+# healthy service under a stale unit definition and report a false success.
+units_changed=0
+for unit in "${SERVICES[@]}"; do
+  source_unit="${APP_DIR}/deploy/${unit}.service"
+  installed_unit="/etc/systemd/system/${unit}.service"
+  [ -f "$source_unit" ] || fail "tracked unit missing: ${source_unit}"
+  if cmp -s "$source_unit" "$installed_unit"; then
+    log "${unit}.service unchanged"
+  else
+    log "Installing changed ${unit}.service"
+    install -o root -g root -m 0644 "$source_unit" "$installed_unit"
+    units_changed=1
+  fi
+done
+if [ "$units_changed" -eq 1 ]; then
+  log "Reloading systemd unit definitions"
+  systemctl daemon-reload || fail "systemctl daemon-reload failed"
+fi
+
 # --- Restart ---------------------------------------------------------------
 # The two units are independent (a gunicorn HTTP server vs. a WebSocket
 # subscriber writing to Redis), so restarting them together is safe — the
