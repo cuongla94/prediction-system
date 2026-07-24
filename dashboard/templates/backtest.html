@@ -16,6 +16,65 @@
     </div>
     <p class="page-subtitle" style="max-width:820px;margin-bottom:30px">How the prediction model is actually calibrated right now, and the independent checks behind it — not a one-time report, this reflects whatever the two scripts below last produced.</p>
 
+    {% if investigation %}
+    <div class="card" style="padding:18px 20px;margin-bottom:28px">
+      <div class="section-head" style="margin-top:0">
+        <h4>Latest strategy investigation</h4>
+        <span class="section-head-rule"></span>
+        <span class="status-badge status-{{ 'success' if investigation.promotion_status == 'APPROVED' else 'failed' }}">{{ investigation.investigation_status|replace('_', ' ')|title }}</span>
+      </div>
+      <div class="stat-grid" style="margin-bottom:14px">
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Evidence window</div>
+          <div class="stat-value tnum" style="font-size:15px">{{ investigation.date_range }}</div>
+          <div class="stat-sub">{{ investigation.independent_events }} independent events</div>
+        </div>
+        <div class="stat-card stat-card--loss">
+          <div class="stat-label">Current strategy</div>
+          <div class="stat-value" style="font-size:15px">{{ investigation.current_strategy_status }}</div>
+          <div class="stat-sub tnum">{{ investigation.current_strategy }}</div>
+        </div>
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Best exploratory candidate</div>
+          <div class="stat-value" style="font-size:15px">{{ investigation.best_candidate }}</div>
+          <div class="stat-sub">Not promoted</div>
+        </div>
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Candidate vs market Brier</div>
+          <div class="stat-value tnum" style="font-size:17px">{{ "%.4f"|format(investigation.candidate_brier_score) }} vs {{ "%.4f"|format(investigation.market_brier_score) }}</div>
+          <div class="stat-sub">Lower is better</div>
+        </div>
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">One trade per event</div>
+          <div class="stat-value tnum">{{ investigation.wins }}W / {{ investigation.losses }}L</div>
+          <div class="stat-sub">{{ "%.1f%%"|format(investigation.win_rate * 100) if investigation.win_rate is not none else 'not measurable' }}</div>
+        </div>
+        <div class="stat-card stat-card--loss">
+          <div class="stat-label">Promotion</div>
+          <div class="stat-value" style="font-size:17px">{{ investigation.promotion_status }}</div>
+          <div class="stat-sub">{{ investigation.execution_basis }}</div>
+        </div>
+      </div>
+      <p class="section-note" style="margin-bottom:12px"><strong>Why:</strong> {{ investigation.primary_reason }}</p>
+      <details>
+        <summary style="cursor:pointer;font-weight:600;color:var(--color-accent)">View investigation details</summary>
+        <div class="table-wrap" style="margin-top:14px">
+          <table class="table"><tbody>
+            <tr><td>Validation wins / losses / win rate</td><td class="tnum">{{ investigation.wins }} / {{ investigation.losses }} / {{ "%.1f%%"|format(investigation.win_rate * 100) if investigation.win_rate is not none else '—' }}</td></tr>
+            <tr><td>Net P&amp;L</td><td>{{ investigation.net_pnl if investigation.net_pnl is not none else 'Not estimable — no executable quote history' }}</td></tr>
+            <tr><td>Expectancy</td><td>{{ investigation.expectancy if investigation.expectancy is not none else 'Not estimable' }}</td></tr>
+            <tr><td>Profit factor</td><td>{{ investigation.profit_factor if investigation.profit_factor is not none else 'Not estimable' }}</td></tr>
+            <tr><td>Maximum drawdown</td><td>{{ investigation.maximum_drawdown if investigation.maximum_drawdown is not none else 'Not estimable' }}</td></tr>
+            <tr><td>Untouched holdout Brier</td><td class="tnum">{{ "%.4f"|format(investigation.holdout.brier_score) }} vs market {{ "%.4f"|format(investigation.holdout.market_brier_score) }} ({{ investigation.holdout.independent_events }} events)</td></tr>
+            <tr><td>No-lookahead validation</td><td>{{ 'Passed' if investigation.no_lookahead_passed else 'Failed' }}</td></tr>
+            <tr><td>Configured live strategy changed</td><td>{{ 'Yes' if not investigation.configured_live_strategy_unchanged else 'No' }}</td></tr>
+          </tbody></table>
+        </div>
+        <p class="section-note">Full reproducible outputs are stored under <code>artifacts/strategy_investigation/</code>, including the canonical rows, candidate registry, cohorts, walk-forward folds, holdout, rejected candidates, and final report.</p>
+      </details>
+    </div>
+    {% endif %}
+
     {% if db_error %}
     <div class="banner banner-warning">Can't reach the database right now: {{ db_error }}</div>
     {% else %}
@@ -25,11 +84,11 @@
       <span class="section-head-rule"></span>
     </div>
     <p class="section-note">
-      Trading-mechanics work is <strong>paused</strong> as of 2026-07-20 — three independent tests
-      (live prices, full backtest, same-day proof) agreed the model has no edge over Kalshi's own
-      prices, and no amount of sizing or exit logic can manufacture one. This panel is the standing
-      answer to “has anything changed?”, so that question gets settled from accumulated evidence
-      rather than a fresh manual audit each time.
+      The configured weather strategy remains <strong>historically failed and unpromoted</strong>.
+      Production execution infrastructure now exists behind strict capital, reconciliation, data
+      freshness, risk, and operator-confirmation gates, but that capability does not turn weak
+      research evidence into an edge. This panel is the standing answer to “has anything changed?”
+      from accumulated evidence rather than a fresh manual audit each time.
       <br /><br />
       <strong>Skill</strong> is the number that matters, not Brier. The model was already reasonably
       calibrated against outcomes while losing badly to the market, so Brier alone could improve for

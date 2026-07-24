@@ -1,17 +1,18 @@
 # kalshi-prediction-market
 
-Semi-automated signal system for Kalshi's daily temperature markets. Compares
-weather ensemble forecasts (Open-Meteo) against Kalshi prices, surfaces edge
-above fees + a safety margin as reviewable alerts on a dashboard. No
-auto-execution — a human clicks through to Kalshi and trades manually.
+Weather-signal and tightly constrained automated-execution system for Kalshi's
+daily temperature markets. It compares ensemble forecasts (Open-Meteo) with
+Kalshi prices, surfaces reviewable alerts, and can submit one-contract
+production limit orders only through a separately enabled, persisted live path.
 
-Cities: NYC, Chicago, Philadelphia, Austin, Denver, Miami.
+Coverage: 20 cities across 40 configured high/low temperature series.
 
-**Current status:** pipeline (steps 1-4) and dashboard (step 5) are built and
-backtested; the probability model has a validated bias correction but is
-**not validated for live trading** — see the dashboard's warning banner and
-`kalshi-backtest-findings` notes for specifics. Scheduler (step 6) runs via
-cron; nothing is deployed to a server yet.
+**Current strategy status: FAILED / NOT PROMOTED.** The latest point-in-time
+investigation found no defensible executable edge and left the configured live
+strategy unchanged. The execution infrastructure is operational code, not an
+endorsement of the strategy. Live enablement stays blocked unless every
+production, capital, reconciliation, data-freshness, kill-switch, and risk gate
+passes.
 
 ## Setup
 
@@ -23,10 +24,14 @@ cp .env.example .env   # fill in real values — see below
 Series/event/market discovery is public and needs no credentials. Fill in the
 rest of `.env` as each piece becomes relevant:
 
-- `KALSHI_API_KEY_ID` / `KALSHI_PRIVATE_KEY_PATH` — only needed for
-  authenticated (portfolio/trading) endpoints, which nothing here calls yet
-  (no auto-execution is planned). Keep the `.pem` outside the repo or under a
-  gitignored path (e.g. `secrets/`) — never commit it.
+- `KALSHI_API_KEY_ID` / `KALSHI_PRIVATE_KEY_PATH` — required for authenticated
+  portfolio and order endpoints. Keep the `.pem` outside the repo or under a
+  gitignored path (for example `secrets/`) and never commit it.
+- `KALSHI_ENVIRONMENT` — `production` or `demo`. Live enablement requires
+  `production` and verifies that the client actually targets Kalshi production.
+  `KALSHI_PRODUCTION_BASE_URL` and `KALSHI_DEMO_BASE_URL` may override the
+  environment defaults; `KALSHI_BASE_URL` remains a compatibility override.
+- `KALSHI_SUBACCOUNT` — optional numeric subaccount header.
 - `DATABASE_URL` — Postgres connection string (Supabase or otherwise). Without
   it, the dashboard falls back to a frozen demo snapshot instead of failing.
   Run `db/schema.sql` once against a fresh database (Supabase SQL editor, or
@@ -43,20 +48,26 @@ themselves — no need to `export` these into your shell manually.
 
 ## Structure
 
-- `kalshi_client/` — Kalshi REST client: RSA-PSS request signing (`auth.py`),
-  the client itself (`client.py`, including `get_historical_markets` for data
-  older than Kalshi's live/historical cutoff), response models (`models.py`),
-  fees (`fees.py`), market URLs (`urls.py`), ticker date parsing (`tickers.py`).
+- `kalshi_client/` — Kalshi REST client: RSA-PSS signing, current V2 market and
+  portfolio reads, create/cancel order calls, order-book conversion, response
+  models, fees, URLs, and ticker parsing.
+- `live_trading/` — persisted bot-owned order lifecycle, deterministic
+  idempotency, account reconciliation, fixed risk, and one-cycle execution
+  service. Manual account orders remain outside bot ownership.
 - `weather/` — Open-Meteo ensemble client (`open_meteo.py`), historical
   Previous-Runs client for backtesting (`historical_forecast.py`), per-city NWS
   station config (`stations.py`), the probability engine (`probability.py`) and
   its fitted bias/std correction (`calibration_params.py`).
 - `edge/` — model-vs-market edge calculator (`calculator.py`).
-- `db/schema.sql` — Postgres schema: `alerts`, `forecast_pulls`, `price_snapshots`.
+- `db/schema.sql` — Postgres schema for alerts, snapshots, bot control, and the
+  live order/event/fill/reconciliation/execution audit trail.
 - `backtest/` — harness (`harness.py`) and calibration diagnostics
   (`calibration.py`) used to validate the probability engine against real
   settled markets, plus a Redis cache (`cache.py`) so re-running a backtest
   doesn't re-fetch months of immutable historical data every time.
+- `strategy_research/` and `artifacts/strategy_investigation/` — canonical
+  point-in-time investigation, no-lookahead checks, candidate registry,
+  chronological folds, final holdout, and reproducible evidence.
 - `dashboard/` — Flask app showing alert cards (rules text, kid-readable stat
   tooltips, a calibration-status banner). Reads the latest alert per market
   from Postgres; falls back to a real-but-frozen demo snapshot if `DATABASE_URL`
@@ -76,22 +87,41 @@ uv run scripts/forecast_vs_market.py       # one city's calibrated model vs. liv
 uv run scripts/generate_alerts.py          # full pipeline, all 6 cities; writes to Postgres if DATABASE_URL is set
 uv run scripts/mark_settled_alerts.py      # checks pending alerts against Kalshi, writes back settled_at/actual_outcome
 uv run scripts/run_backtest.py             # backtests the probability engine against real settled markets
+uv run scripts/run_strategy_investigation.py # read-only research run; never promotes a strategy
+uv run scripts/run_live_execution.py       # one reconciled cycle; submits only when explicitly enabled
 uv run python -m dashboard.app             # dashboard dev server (also registered in .claude/launch.json)
 ```
 
+## Production automation
+
+The only live-enable path is the **Live automation** control inside the
+existing **Your Kalshi portfolio** tab. It performs a fresh reconciliation,
+then requires the exact confirmation `ENABLE LIVE TRADING`. Available
+production cash must be strictly greater than `$5.00`.
+
+Fixed, non-configurable limits are one contract, `$1` per order, `$1` open per
+market, `$2` per event/date, `$5` total open exposure, `$2` daily realized-loss
+stop, `$3` mark-to-market stop, and a two-consecutive-loss stop. Orders are
+limit-only. OFF mode continues reconciliation and settlement work but cannot
+submit.
+
+The recurring execution cycle is called by the existing scheduler scripts; do
+not install a second scheduler. Apply the current `db/schema.sql` before
+enabling so the live audit tables exist. Emergency stop cancels only bot-owned
+orders and never touches manual account orders.
+
 ## Scheduler
 
-`scheduler/run_pipeline.sh` chains `scripts/generate_alerts.py` (new alerts)
-and `scripts/mark_settled_alerts.py` (write back outcomes for pending ones) —
-each runs regardless of whether the other failed, since they're independent
-concerns. `scheduler/crontab.example` runs it four times a day (~4-5 hours
+`scheduler/run_pipeline.sh` chains alert generation, settlement, and one live
+execution cycle. Each stage is isolated so one failure does not suppress the
+other safety work. `scheduler/crontab.example` runs it four times a day (~4-5 hours
 after each GFS/ICON model init), aligned to when Open-Meteo has actually
 ingested the new run; the settlement check is cheap enough to just ride along
 on the same cadence rather than needing its own. Install with
 `crontab scheduler/crontab.example` after editing the placeholder path — cron
-needs an absolute path to both the script and the log file. Not running
-anywhere yet; this is ready to install once there's a host (the plan is a
-DigitalOcean droplet) to install it on.
+needs an absolute path to both the script and the log file. The live cycle is
+inert unless the dedicated production enablement state is on and every gate
+passes.
 
 Without `mark_settled_alerts.py` running regularly, the dashboard's "latest
 alert per market" query has nothing to exclude old, resolved markets —

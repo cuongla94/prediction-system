@@ -470,7 +470,7 @@ a.trade-link.btn { text-decoration: none; }
 .stat-card {
   background: var(--color-card-bg); border: 1px solid var(--color-divider); border-left: 3px solid var(--color-divider);
   border-radius: var(--radius-md); box-shadow: var(--shadow-sm); padding: 18px 20px;
-  display: flex; flex-direction: column; gap: 7px;
+  display: flex; flex-direction: column; gap: 7px; min-width: 0;
 }
 .stat-card--gain { border-left-color: var(--color-gain); }
 .stat-card--gain .stat-value { color: var(--color-gain); }
@@ -482,8 +482,11 @@ a.trade-link.btn { text-decoration: none; }
 .stat-card--accent .stat-value { color: var(--color-accent-800); }
 .stat-card--flat { border-left-color: var(--color-neutral-400); }
 .stat-label { font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-neutral-600); display: flex; align-items: center; gap: 0.3rem; }
-.stat-value { font-family: var(--font-heading); font-weight: 600; font-size: 32px; line-height: 1; color: var(--color-text); }
-.stat-sub { font-size: 12px; color: var(--color-neutral-600); }
+.stat-value {
+  font-family: var(--font-heading); font-weight: 600; font-size: 32px;
+  line-height: 1; color: var(--color-text); overflow-wrap: anywhere;
+}
+.stat-sub { font-size: 12px; color: var(--color-neutral-600); overflow-wrap: anywhere; }
 .stat-card-detail { font-size: 0.82rem; color: var(--color-loss); margin: 0; }
 .stat-card-time { font-size: 11.5px; color: var(--color-neutral-500); margin-top: 2px; }
 .status-stale { color: var(--color-warning-text); font-weight: 700; }
@@ -494,6 +497,29 @@ a.trade-link.btn { text-decoration: none; }
 .validation-verdict-failed { color: var(--color-warning-text); font-weight: 700; letter-spacing: 0.02em; }
 .validation-criteria { margin: 0.75rem 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.9rem; }
 .validation-criteria li::marker { color: var(--color-accent); }
+
+/* — compact validation card (Stage 3): collapsed by default, giant red box
+   only appears inside the <details> body once a viewer chooses to expand it. — */
+.validation-card { border: 1px solid var(--color-divider); border-radius: var(--radius-lg); background: var(--color-card-bg); box-shadow: var(--shadow-sm); padding: 20px 24px; margin-bottom: 40px; }
+.validation-card h2 { margin: 0 0 4px; }
+.validation-conclusion { margin: 4px 0 14px; color: var(--color-neutral-700); }
+.validation-cohorts { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 14px; }
+.validation-cohort-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-neutral-500); margin-bottom: 2px; }
+.validation-cohort-value { font-size: 1rem; font-weight: 600; }
+.validation-cohort-sub { font-size: 0.8rem; color: var(--color-neutral-500); }
+.validation-status-lines { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 0.82rem; color: var(--color-neutral-600); margin: 14px 0; padding-top: 12px; border-top: 1px solid var(--color-divider); }
+.validation-status-lines strong { color: var(--color-text); }
+.validation-rationale { margin-top: 4px; }
+.validation-rationale > summary { cursor: pointer; font-weight: 600; color: var(--color-accent); list-style: none; }
+.validation-rationale > summary:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 4px; }
+.validation-rationale > summary::-webkit-details-marker { display: none; }
+.validation-rationale > summary::before { content: "▸ "; }
+.validation-rationale[open] > summary::before { content: "▾ "; }
+.validation-rationale .validation-rationale-hide { display: none; }
+.validation-rationale[open] .validation-rationale-show { display: none; }
+.validation-rationale[open] .validation-rationale-hide { display: inline; }
+.validation-rationale-body { margin-top: 14px; }
+.validation-links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; font-size: 0.85rem; }
 
 /* — login — */
 .login-shell { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 1.5rem; }

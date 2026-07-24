@@ -222,7 +222,7 @@ def test_decision_log_flags_when_decided_markers_vanish(tmp_path):
     doc.write_text("# notes\n\nnothing decided here\n")
     finding = check_decision_log(doc)
     assert finding.status is Status.FLAG
-    assert len(finding.evidence) >= 3  # 3 missing markers + the file line
+    assert len(finding.evidence) >= 5  # 5 missing markers + the file line
 
 
 def test_decision_log_passes_when_markers_present(tmp_path):
@@ -231,6 +231,9 @@ def test_decision_log_passes_when_markers_present(tmp_path):
         "- TLS: RISK ACCEPTED, 2026-07-20\n"
         "- Login rate limiting: SKIPPED\n"
         "- Trading-mechanics work: PAUSED\n"
+        "- Automated execution infrastructure: APPROVED WITH GATES\n"
+        "- Production trading dashboard security: REQUIRED BEFORE LIVE ACTIVATION\n"
+        "- Production automated execution: APPROVED WITH FIXED LIMITS\n"
     )
     assert check_decision_log(doc).status is Status.PASS
 

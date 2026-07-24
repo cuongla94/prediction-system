@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 import psycopg
 from dotenv import load_dotenv
 
+from bot_control import get_bot_state
 from monitoring import track_run
 from paper_trading import (
     STARTING_BANKROLL_USD,
@@ -176,6 +177,25 @@ def main() -> int:
         print("DATABASE_URL not set — nothing to trade against.")
         return 0
 
+    # Stage 3 bot-control gate (bot_control/state.py): settlements and early
+    # exits always run below regardless of this — a position that resolved
+    # needs to be marked closed whether or not the bot is currently enabled,
+    # same as Part 7's OFF semantics ("manual reconciliation remains
+    # available"). Only step 3 (opening NEW positions) is gated: disabled or
+    # killed both mean "no new submissions," matching Part 21's kill-switch
+    # contract and the dashboard's Stop Bot button.
+    bot_state = get_bot_state()
+    skip_new_positions = (
+        bot_state.kill_switch
+        or not bot_state.enabled
+        or bot_state.effective_mode != "PAPER"
+    )
+    skip_reason = (
+        "kill switch active" if bot_state.kill_switch
+        else "bot disabled" if not bot_state.enabled
+        else f"effective mode is {bot_state.effective_mode}, not PAPER"
+    )
+
     settled_count = 0
     exited_count = 0
     opened_count = 0
@@ -209,64 +229,74 @@ def main() -> int:
         # against whatever cash is left after the above and after holding
         # back the reserve — see deployable_cash's docstring for why the
         # reserve is pinned to total_bankroll, not cash_available itself.
-        with conn.cursor() as cur:
-            cur.execute("select market_ticker from paper_trades")
-            already_traded = {row[0] for row in cur.fetchall()}
-            cash_available = _current_cash(cur)
-            total_bankroll = _total_bankroll(cur)
-            existing_exposure_by_date = _existing_exposure_by_date(cur)
-
-        deployable = deployable_cash(cash_available, total_bankroll)
-        reserve_held = round(cash_available - deployable, 2)
-        # Cross-city correlated-day cap, as a fraction of total bankroll (not
-        # idle cash) — the same total_bankroll basis the reserve is pinned to,
-        # so both risk limits move only on real P&L, not on reallocation.
-        max_day_exposure = round(total_bankroll * max_day_exposure_fraction_setting(), 4)
-        new_positions = plan_new_positions(
-            open_alerts,
-            already_traded,
-            deployable,
-            max_correlated_exposure=max_day_exposure,
-            existing_exposure_by_date=existing_exposure_by_date,
-        )
-        if new_positions:
+        # Skipped entirely (new_positions stays []) when the bot is disabled
+        # or kill-switched — see skip_new_positions above.
+        new_positions: list = []
+        reserve_held = 0.0
+        if skip_new_positions:
+            print(f"Skipping new-position step: {skip_reason}.")
+        else:
             with conn.cursor() as cur:
-                for p in new_positions:
-                    cur.execute(
-                        "insert into paper_trades (market_ticker, event_ticker, series_ticker, city, "
-                        "bracket_label, side, entry_price, contracts, entry_fee, cost_basis, "
-                        "entry_model_probability, entry_edge) values (%(market_ticker)s, %(event_ticker)s, "
-                        "%(series_ticker)s, %(city)s, %(bracket_label)s, %(side)s, %(entry_price)s, "
-                        "%(contracts)s, %(entry_fee)s, %(cost_basis)s, %(entry_model_probability)s, "
-                        "%(entry_edge)s)",
-                        dict(
-                            market_ticker=p.market_ticker,
-                            event_ticker=p.event_ticker,
-                            series_ticker=p.series_ticker,
-                            city=p.city,
-                            bracket_label=p.bracket_label,
-                            side=p.side,
-                            entry_price=p.entry_price,
-                            contracts=p.contracts,
-                            entry_fee=p.entry_fee,
-                            cost_basis=p.cost_basis,
-                            entry_model_probability=p.entry_model_probability,
-                            entry_edge=p.entry_edge,
-                        ),
-                    )
-            conn.commit()
+                cur.execute("select market_ticker from paper_trades")
+                already_traded = {row[0] for row in cur.fetchall()}
+                cash_available = _current_cash(cur)
+                total_bankroll = _total_bankroll(cur)
+                existing_exposure_by_date = _existing_exposure_by_date(cur)
+
+            deployable = deployable_cash(cash_available, total_bankroll)
+            reserve_held = round(cash_available - deployable, 2)
+            # Cross-city correlated-day cap, as a fraction of total bankroll
+            # (not idle cash) — the same total_bankroll basis the reserve is
+            # pinned to, so both risk limits move only on real P&L, not on
+            # reallocation.
+            max_day_exposure = round(total_bankroll * max_day_exposure_fraction_setting(), 4)
+            new_positions = plan_new_positions(
+                open_alerts,
+                already_traded,
+                deployable,
+                max_correlated_exposure=max_day_exposure,
+                existing_exposure_by_date=existing_exposure_by_date,
+            )
+            if new_positions:
+                with conn.cursor() as cur:
+                    for p in new_positions:
+                        cur.execute(
+                            "insert into paper_trades (market_ticker, event_ticker, series_ticker, city, "
+                            "bracket_label, side, entry_price, contracts, entry_fee, cost_basis, "
+                            "entry_model_probability, entry_edge, strategy_version) values (%(market_ticker)s, "
+                            "%(event_ticker)s, %(series_ticker)s, %(city)s, %(bracket_label)s, %(side)s, "
+                            "%(entry_price)s, %(contracts)s, %(entry_fee)s, %(cost_basis)s, "
+                            "%(entry_model_probability)s, %(entry_edge)s, %(strategy_version)s)",
+                            dict(
+                                market_ticker=p.market_ticker,
+                                event_ticker=p.event_ticker,
+                                series_ticker=p.series_ticker,
+                                city=p.city,
+                                bracket_label=p.bracket_label,
+                                side=p.side,
+                                entry_price=p.entry_price,
+                                contracts=p.contracts,
+                                entry_fee=p.entry_fee,
+                                cost_basis=p.cost_basis,
+                                entry_model_probability=p.entry_model_probability,
+                                entry_edge=p.entry_edge,
+                                strategy_version=p.strategy_version,
+                            ),
+                        )
+                conn.commit()
         opened_count = len(new_positions)
 
         with conn.cursor() as cur:
             final_cash = _current_cash(cur)
 
+        skip_suffix = f" (new positions skipped: {skip_reason})" if skip_new_positions else ""
         run.summary = (
-            f"{settled_count} settled, {exited_count} exited early, {opened_count} opened, "
+            f"{settled_count} settled, {exited_count} exited early, {opened_count} opened{skip_suffix}, "
             f"${final_cash:.2f} cash available (${reserve_held:.2f} held in reserve)"
         )
 
     print(
-        f"Settled {settled_count}, exited {exited_count} early, opened {opened_count} new. "
+        f"Settled {settled_count}, exited {exited_count} early, opened {opened_count} new{skip_suffix}. "
         f"Cash available: ${final_cash:.2f} (${reserve_held:.2f} held in reserve)"
     )
     return 0

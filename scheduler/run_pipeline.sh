@@ -50,6 +50,10 @@ settle_status=$?
 # pipeline failure either, same reasoning as send_notifications.py below.
 "$UV" run --no-sync python scripts/run_paper_trading.py
 
+# Reuses this same scheduler. The live cycle always reconciles/fill-processes,
+# but can submit only when the persisted live toggle and every backend gate pass.
+"$UV" run --no-sync python scripts/run_live_execution.py
+
 # Must run after generate_alerts.py, since it notifies about whatever that
 # step just inserted. Always exits 0 itself (missing credentials/a failed
 # send aren't pipeline failures — see the script), so it isn't part of the

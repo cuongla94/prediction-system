@@ -44,6 +44,16 @@ from weather.stations import STATIONS
 # computed by the caller from the paper_trades table, not tracked here.
 STARTING_BANKROLL_USD = 100.0
 
+# Stamped onto every new position (db/schema.sql's paper_trades.strategy_version)
+# so later analysis — including DECISIONS.md's revisit-trigger check — can
+# filter to "trades opened under the current locked config" instead of the
+# whole history, which mixes different cash-reserve settings, resets, and
+# sizing-logic changes over time. Bumped BY HAND only when a real strategy
+# change ships here (sizing, exits, calibration approach) — deliberately not
+# derived from a git hash, so it tracks strategy changes specifically, not
+# every unrelated commit to this file or its neighbors.
+STRATEGY_VERSION = "v1-2026-07-23"
+
 # Below this price, a contract pays out at a huge multiple (a 0.5c YES pays
 # ~199x) — which sounds great, but Kalshi's own fee-adjusted threshold
 # shrinks toward zero at the same extremes (fee = 7% * price * (1-price)),
@@ -310,6 +320,7 @@ class NewPosition:
     cost_basis: float
     entry_model_probability: float
     entry_edge: float
+    strategy_version: str = STRATEGY_VERSION
 
 
 @dataclass(frozen=True)
@@ -501,6 +512,7 @@ def plan_new_positions(
                     cost_basis=cost_basis,
                     entry_model_probability=alert.model_probability,
                     entry_edge=alert.edge,
+                    strategy_version=STRATEGY_VERSION,
                 )
             )
             remaining_cash = round(remaining_cash - cost_basis, 4)

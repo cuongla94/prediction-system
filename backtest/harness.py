@@ -107,6 +107,15 @@ class BacktestRow:
     floor_strike: float | None
     cap_strike: float | None
     approx_actual_temp: float | None
+    # Per-ensemble-member forecast for this row's target_date (e.g.
+    # {"gfs_seamless": 81.2, "ecmwf_ifs025": 79.8, ...}), alongside the
+    # already-pooled forecast_mean above. Optional and defaulted so every
+    # existing keyword-arg construction site (this module, tests) stays
+    # valid unchanged. Added 2026-07-23 for scripts/run_backtest_by_model.py
+    # — collect_rows already has this per-model breakdown in scope
+    # (fetch_historical_daily returns it) and previously discarded it the
+    # moment it computed the pooled mean.
+    per_model_forecast: dict[str, float] | None = None
 
 
 def collect_rows(
@@ -214,6 +223,7 @@ def collect_rows(
                     floor_strike=market.floor_strike,
                     cap_strike=market.cap_strike,
                     approx_actual_temp=approx_actual_temp,
+                    per_model_forecast=dict(model_forecasts),
                 )
             )
     return rows
@@ -233,6 +243,41 @@ def split_by_date(
     fit_rows = [row for row in rows if row.target_date in fit_dates]
     eval_rows = [row for row in rows if row.target_date not in fit_dates]
     return fit_rows, eval_rows
+
+
+def rolling_splits(
+    rows: list[BacktestRow], n_folds: int = 4, min_fit_fraction: float = 0.4
+) -> list[tuple[list[BacktestRow], list[BacktestRow]]]:
+    """Expanding-window walk-forward split: an initial fit window covering the
+    first min_fit_fraction of unique dates, then n_folds chronological eval
+    slices carved from the remaining dates. Each fold's fit window grows to
+    include every date that precedes its eval slice — never shrinking, never
+    testing on a date earlier than what it fit on — unlike split_by_date's
+    single 70/30 split, this answers "does calibration improve, stay flat, or
+    degrade as more history accumulates," the same question DECISIONS.md's
+    WEAK revisit trigger watches for via weekly cron, computed retrospectively
+    over existing history in one run instead of waiting weeks for more live
+    recalibrations.
+    """
+    dates = sorted({row.target_date for row in rows})
+    initial_fit_count = round(len(dates) * min_fit_fraction)
+    remaining = dates[initial_fit_count:]
+    if len(remaining) < n_folds:
+        raise ValueError(
+            f"Need at least {n_folds} remaining dates after the initial {min_fit_fraction:.0%} fit "
+            f"window to form {n_folds} folds, got {len(remaining)} (of {len(dates)} total)."
+        )
+
+    fold_boundaries = [round(len(remaining) * i / n_folds) for i in range(n_folds + 1)]
+
+    splits: list[tuple[list[BacktestRow], list[BacktestRow]]] = []
+    for i in range(n_folds):
+        fit_dates = set(dates[: initial_fit_count + fold_boundaries[i]])
+        eval_dates = set(remaining[fold_boundaries[i] : fold_boundaries[i + 1]])
+        fit_rows = [row for row in rows if row.target_date in fit_dates]
+        eval_rows = [row for row in rows if row.target_date in eval_dates]
+        splits.append((fit_rows, eval_rows))
+    return splits
 
 
 def collect_dated_residuals(rows: list[BacktestRow]) -> list[tuple[str, float]]:
@@ -451,6 +496,32 @@ def fit_empirical_normal(rows: list[BacktestRow]) -> tuple[float, float]:
     residuals = collect_residuals(rows)
     if len(residuals) < 2:
         raise ValueError(f"Need at least 2 usable days to fit a distribution, got {len(residuals)}.")
+    mean_bias = sum(residuals) / len(residuals)
+    variance = sum((r - mean_bias) ** 2 for r in residuals) / (len(residuals) - 1)
+    return mean_bias, variance**0.5
+
+
+def fit_empirical_normal_for_model(rows: list[BacktestRow], model: str) -> tuple[float, float]:
+    """Same fit as fit_empirical_normal, but residuals are computed against
+    one specific ensemble member's own forecast (per_model_forecast[model])
+    instead of the pooled forecast_mean — for scripts/run_backtest_by_model.py's
+    per-model ablation, answering "is any single model, on its own, better
+    calibrated than the blend the live pipeline actually uses?" Rows without
+    per_model_forecast (older rows collected before that field existed) or
+    without this specific model's value are excluded, same as
+    collect_residuals already excludes tail-bracket days with no point value.
+    """
+    seen_dates: set[str] = set()
+    residuals: list[float] = []
+    for row in rows:
+        if row.approx_actual_temp is None or row.target_date in seen_dates:
+            continue
+        if row.per_model_forecast is None or model not in row.per_model_forecast:
+            continue
+        seen_dates.add(row.target_date)
+        residuals.append(row.approx_actual_temp - row.per_model_forecast[model])
+    if len(residuals) < 2:
+        raise ValueError(f"Need at least 2 usable days with {model!r} data to fit a distribution, got {len(residuals)}.")
     mean_bias = sum(residuals) / len(residuals)
     variance = sum((r - mean_bias) ** 2 for r in residuals) / (len(residuals) - 1)
     return mean_bias, variance**0.5

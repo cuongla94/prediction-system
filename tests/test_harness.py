@@ -9,10 +9,12 @@ from backtest.harness import (
     collect_dated_residuals_with_spread,
     collect_residuals,
     fit_empirical_normal,
+    fit_empirical_normal_for_model,
     fit_monthly_bias,
     fit_remaining_scale_fraction,
     fit_spread_scale,
     fit_student_t,
+    rolling_splits,
     split_by_date,
 )
 from kalshi_client.models import Market
@@ -50,6 +52,7 @@ def _row(
     forecast_mean: float = 80.0,
     approx_actual_temp: float | None = 80.0,
     forecast_spread: float = 1.0,
+    per_model_forecast: dict[str, float] | None = None,
 ) -> BacktestRow:
     return BacktestRow(
         city="NYC",
@@ -65,6 +68,7 @@ def _row(
         floor_strike=79.0,
         cap_strike=80.0,
         approx_actual_temp=approx_actual_temp,
+        per_model_forecast=per_model_forecast,
     )
 
 
@@ -85,6 +89,44 @@ def test_split_by_date_is_chronological():
     fit_rows, _ = split_by_date(rows, fit_fraction=1 / 3)
 
     assert {r.target_date for r in fit_rows} == {"2026-01-01"}
+
+
+def _dates(n: int) -> list[str]:
+    return [f"2026-01-{day:02d}" for day in range(1, n + 1)]
+
+
+def test_rolling_splits_fit_window_grows_each_fold():
+    rows = [_row(d) for d in _dates(20)]
+
+    folds = rolling_splits(rows, n_folds=4, min_fit_fraction=0.4)
+
+    assert len(folds) == 4
+    prev_fit_dates: set[str] = set()
+    for fit_rows, eval_rows in folds:
+        fit_dates = {r.target_date for r in fit_rows}
+        eval_dates = {r.target_date for r in eval_rows}
+        assert prev_fit_dates <= fit_dates, "fit window must never shrink between folds"
+        assert fit_dates.isdisjoint(eval_dates)
+        assert max(fit_dates) < min(eval_dates), "must never eval on a date earlier than what it fit on"
+        prev_fit_dates = fit_dates | eval_dates
+
+
+def test_rolling_splits_eval_slices_cover_all_remaining_dates_exactly_once():
+    dates = _dates(20)
+    rows = [_row(d) for d in dates]
+
+    folds = rolling_splits(rows, n_folds=4, min_fit_fraction=0.4)
+
+    all_eval_dates = [r.target_date for _, eval_rows in folds for r in eval_rows]
+    initial_fit_count = round(len(dates) * 0.4)
+    assert sorted(all_eval_dates) == dates[initial_fit_count:]
+
+
+def test_rolling_splits_raises_when_too_few_remaining_dates_for_fold_count():
+    rows = [_row(d) for d in _dates(5)]
+
+    with pytest.raises(ValueError, match="Need at least"):
+        rolling_splits(rows, n_folds=4, min_fit_fraction=0.8)
 
 
 def test_collect_residuals_excludes_tail_bracket_days():
@@ -138,6 +180,62 @@ def test_fit_empirical_normal_detects_systematic_bias():
 def test_fit_empirical_normal_requires_at_least_two_days():
     with pytest.raises(ValueError):
         fit_empirical_normal([_row("2026-01-01")])
+
+
+# --- fit_empirical_normal_for_model --------------------------------------
+
+
+def test_fit_empirical_normal_for_model_uses_that_models_own_forecast():
+    # GFS runs 2 cold, ECMWF runs 5 cold on the same days -- fitting against
+    # each model separately should recover each model's own bias, not a
+    # blended one.
+    rows = [
+        _row("2026-01-01", approx_actual_temp=82.0, per_model_forecast={"gfs": 80.0, "ecmwf": 77.0}),
+        _row("2026-01-02", approx_actual_temp=82.0, per_model_forecast={"gfs": 80.0, "ecmwf": 77.0}),
+    ]
+    gfs_bias, gfs_std = fit_empirical_normal_for_model(rows, "gfs")
+    ecmwf_bias, ecmwf_std = fit_empirical_normal_for_model(rows, "ecmwf")
+    assert gfs_bias == pytest.approx(2.0)
+    assert ecmwf_bias == pytest.approx(5.0)
+    assert gfs_std == pytest.approx(0.0)
+    assert ecmwf_std == pytest.approx(0.0)
+
+
+def test_fit_empirical_normal_for_model_skips_rows_missing_that_model():
+    rows = [
+        _row("2026-01-01", approx_actual_temp=82.0, per_model_forecast={"gfs": 80.0}),
+        _row("2026-01-02", approx_actual_temp=82.0, per_model_forecast={"gfs": 80.0, "ecmwf": 77.0}),
+        _row("2026-01-03", approx_actual_temp=82.0, per_model_forecast={"gfs": 80.0, "ecmwf": 77.0}),
+    ]
+    # "ecmwf" only has 2 usable days (row 1 lacks it) -- still enough to fit.
+    bias, _ = fit_empirical_normal_for_model(rows, "ecmwf")
+    assert bias == pytest.approx(5.0)
+
+
+def test_fit_empirical_normal_for_model_requires_at_least_two_usable_days():
+    rows = [_row("2026-01-01", per_model_forecast={"gfs": 80.0})]
+    with pytest.raises(ValueError):
+        fit_empirical_normal_for_model(rows, "gfs")
+
+    # Also raises when the model simply isn't present in enough rows, even
+    # if other models are.
+    rows2 = [
+        _row("2026-01-01", per_model_forecast={"gfs": 80.0}),
+        _row("2026-01-02", per_model_forecast={"gfs": 80.0}),
+    ]
+    with pytest.raises(ValueError):
+        fit_empirical_normal_for_model(rows2, "ecmwf")
+
+
+def test_fit_empirical_normal_for_model_ignores_rows_with_no_per_model_data_at_all():
+    # A row collected before per_model_forecast existed (None) must not crash.
+    rows = [
+        _row("2026-01-01", per_model_forecast=None),
+        _row("2026-01-02", approx_actual_temp=82.0, per_model_forecast={"gfs": 80.0}),
+        _row("2026-01-03", approx_actual_temp=82.0, per_model_forecast={"gfs": 80.0}),
+    ]
+    bias, _ = fit_empirical_normal_for_model(rows, "gfs")
+    assert bias == pytest.approx(2.0)
 
 
 def test_fit_student_t_returns_df_loc_scale():

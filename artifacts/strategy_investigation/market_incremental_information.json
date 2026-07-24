@@ -1,0 +1,10 @@
+{
+  "adds_out_of_sample_value": false,
+  "evaluation_period": "2026-07-22..2026-07-22",
+  "fit_period": "2026-07-20..2026-07-21",
+  "formula": "outcome ~ market_probability + model_minus_market",
+  "market_brier": 0.11268197916666667,
+  "market_coefficient": 8.807419534278468,
+  "model_minus_market_coefficient": 2.611763473547286,
+  "out_of_sample_brier": 0.11465882238639416
+}

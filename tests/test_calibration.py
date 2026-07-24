@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from backtest.calibration import brier_score, bucket_calibration, fit_remaining_scale_fraction_by_brier, market_benchmark
+from backtest.calibration import brier_score, bucket_calibration, fit_remaining_scale_fraction_by_brier, market_benchmark, trade_stats
 
 
 def test_brier_score_perfect_predictions_score_zero():
@@ -131,3 +131,78 @@ def test_fit_remaining_scale_fraction_by_brier_picks_the_lowest_brier_candidate(
 def test_fit_remaining_scale_fraction_by_brier_requires_at_least_one_candidate():
     with pytest.raises(ValueError):
         fit_remaining_scale_fraction_by_brier({}, [True, False])
+
+
+# --- trade_stats ---------------------------------------------------------
+
+
+def test_trade_stats_on_no_trades_returns_all_nones_not_a_crash():
+    s = trade_stats([])
+    assert s.n == 0
+    assert s.win_rate is None
+    assert s.profit_factor is None
+    assert s.expectancy is None
+    assert s.max_drawdown == 0.0
+    assert s.current_streak == 0
+
+
+def test_trade_stats_basic_counts_and_totals():
+    # 3 wins (+10, +5, +2), 2 losses (-4, -1) -- hand-computed.
+    s = trade_stats([10.0, -4.0, 5.0, -1.0, 2.0])
+    assert s.n == 5
+    assert s.wins == 3
+    assert s.losses == 2
+    assert s.win_rate == pytest.approx(3 / 5)
+    assert s.gross_win == pytest.approx(17.0)
+    assert s.gross_loss == pytest.approx(-5.0)
+    assert s.net_pnl == pytest.approx(12.0)
+    assert s.avg_win == pytest.approx(17.0 / 3, abs=1e-4)
+    assert s.avg_loss == pytest.approx(-5.0 / 2)
+    assert s.profit_factor == pytest.approx(17.0 / 5.0)
+    assert s.expectancy == pytest.approx(12.0 / 5)
+
+
+def test_trade_stats_profit_factor_is_none_when_there_are_no_losses():
+    # Undefined (division by zero), not reported as infinity.
+    s = trade_stats([5.0, 3.0])
+    assert s.profit_factor is None
+    assert s.avg_loss is None
+
+
+def test_trade_stats_max_drawdown_is_the_worst_peak_to_trough_decline():
+    # Cumulative path: 10, 15, 5, 8, 20 -- peak hits 15 before dropping to 5
+    # (a 10 drawdown), then a new peak of 20 with nothing after it to test.
+    s = trade_stats([10.0, 5.0, -10.0, 3.0, 12.0])
+    assert s.max_drawdown == pytest.approx(10.0)
+
+
+def test_trade_stats_max_drawdown_is_zero_when_cumulative_pnl_never_falls():
+    s = trade_stats([1.0, 2.0, 3.0])
+    assert s.max_drawdown == 0.0
+
+
+def test_trade_stats_streaks_track_the_longest_run_of_each_sign():
+    # W W L L L W -- longest win streak 2, longest loss streak 3.
+    s = trade_stats([1.0, 1.0, -1.0, -1.0, -1.0, 1.0])
+    assert s.longest_win_streak == 2
+    assert s.longest_loss_streak == 3
+
+
+def test_trade_stats_current_streak_is_signed_by_the_most_recent_run():
+    # Ends on 2 straight losses.
+    s = trade_stats([1.0, 1.0, -1.0, -1.0])
+    assert s.current_streak == -2
+
+    # Ends on 3 straight wins.
+    s = trade_stats([-1.0, 1.0, 1.0, 1.0])
+    assert s.current_streak == 3
+
+
+def test_trade_stats_a_push_breaks_streaks_without_counting_as_win_or_loss():
+    s = trade_stats([1.0, 1.0, 0.0, 1.0])
+    assert s.wins == 3
+    assert s.losses == 0
+    assert s.longest_win_streak == 2  # the push at index 2 resets the streak
+    assert s.current_streak == 1
+    assert s.n == 4  # the push still counts toward n and net_pnl
+    assert s.net_pnl == pytest.approx(3.0)

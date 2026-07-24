@@ -83,25 +83,62 @@ def consecutive_loss_breached(trades: list[Trade], max_consecutive_losses: int) 
     return False
 
 
+def solvency_breached(available_cash: float, effective_bankroll: float) -> bool:
+    """Absolute guard, independent of the percentage math above: true whenever
+    either figure is non-positive.
+
+    daily_loss_breached() already returns False when bankroll <= 0 — that is
+    deliberately "this specific percentage check can't be evaluated without
+    inverting the comparison direction," not "trading is safe" (see its own
+    docstring). This is the function that must actually stop everything in
+    that state. A caller that checks only daily_loss_breached/
+    consecutive_loss_breached and treats a non-positive bankroll as "no
+    breach, proceed" has reproduced exactly the false-negative this function
+    exists to close — always call this one too, and treat either check
+    tripping as a stop.
+    """
+    return available_cash <= 0 or effective_bankroll <= 0
+
+
 def circuit_breaker_verdict(
     trades_closed_today: list[Trade],
     all_trades: list[Trade],
     bankroll: float,
     daily_loss_fraction: float,
     max_consecutive_losses: int,
+    *,
+    available_cash: float | None = None,
 ) -> tuple[bool, str]:
     """Combined circuit-breaker check: returns (breached, reason).
 
     Args:
         trades_closed_today: trades that settled today
         all_trades: all trades in order (for streak counting)
-        bankroll: current total bankroll
+        bankroll: current total bankroll (used as the "effective bankroll"
+            side of the solvency guard below, in addition to the percentage
+            checks)
         daily_loss_fraction: daily loss limit as a fraction of bankroll
         max_consecutive_losses: consecutive-loss limit
+        available_cash: optional current liquid cash. When provided, the
+            absolute solvency guard (solvency_breached) is checked FIRST,
+            ahead of the percentage-based breakers — see that function's
+            docstring for why a non-positive bankroll leaves the percentage
+            checks unable to answer this question at all, not just harder to
+            trigger. Kept optional (default None, guard skipped) so this
+            stays a backward-compatible addition for existing callers that
+            predate this parameter and have no cash figure to pass — a real
+            caller should always pass it.
 
     Returns:
         (True, reason) if any breaker is tripped; (False, "") otherwise
     """
+    if available_cash is not None and solvency_breached(available_cash, bankroll):
+        return (
+            True,
+            f"solvency_breached: available_cash=${available_cash:.2f}, bankroll=${bankroll:.2f} "
+            "— nonpositive capital, all new orders blocked",
+        )
+
     if daily_loss_breached(trades_closed_today, bankroll, daily_loss_fraction):
         today_pnl = sum(t.realized_pnl for t in trades_closed_today)
         return (

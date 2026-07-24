@@ -1,0 +1,334 @@
+{# "Your Kalshi portfolio" tab body — the "Portfolio" page's second tab. Was
+   its own full page (the old portfolio.html) until 2026-07-22, when it and the
+   paper-trading bot were merged into one tabbed "Portfolio" page. Rendered
+   inside portfolio.html's shared <main>, so it carries no <html>/<nav>/<main>
+   and no page-head. Context comes from dashboard/app.py's _portfolio_context();
+   note `error` here is the Kalshi-fetch error, distinct from the paper tab's
+   `db_error`. #}
+<p class="page-subtitle">Your real Kalshi account. Manual positions stay separate from the weather bot’s orders and performance.</p>
+<p class="page-meta tnum">Last updated {{ fetched_at|pacific('%b %-d, %H:%M:%S %Z') }} — fetched live from Kalshi on every load, and this page also refreshes itself every 30s so this timestamp (and everything below it) keeps moving.</p>
+
+{% set bs = bot_status %}
+<div data-bot-scope="kalshi" class="card" style="padding:18px 20px;margin-bottom:28px">
+  <div class="section-head" style="margin-top:0">
+    <h4>Live automation</h4>
+    <span class="section-head-rule"></span>
+  </div>
+
+  <div class="bot-control-message banner banner-warning" style="display:none;margin-bottom:14px"></div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px">
+    <label style="display:flex;align-items:center;gap:10px;font-weight:650">
+      <input type="checkbox" data-live-toggle {% if bs.live_enabled %}checked{% endif %}
+        {% if not bs.live_enabled and not bs.capital_eligible %}disabled{% endif %}>
+      Live automation {{ 'ON' if bs.live_enabled else 'OFF' }}
+    </label>
+    <span class="status-badge status-{{ 'success' if bs.status == 'RUNNING' else 'failed' if bs.status in ('BLOCKED', 'ERROR') else 'unknown' }}">{{ bs.status|title }}</span>
+  </div>
+
+  <div class="stat-grid" style="margin-bottom:14px">
+    <div class="stat-card {{ 'stat-card--gain' if bs.capital_eligible else 'stat-card--loss' }}">
+      <div class="stat-label">Available production cash</div>
+      <div class="stat-value tnum">{{ '$' + bs.available_cash if bs.available_cash is not none else '—' }}</div>
+    </div>
+    <div class="stat-card stat-card--flat">
+      <div class="stat-label">Last successful cycle</div>
+      <div class="stat-value tnum" style="font-size:14px">{{ bs.last_successful_cycle|pacific('%b %-d, %H:%M %Z') if bs.last_successful_cycle else 'never' }}</div>
+    </div>
+    <div class="stat-card stat-card--flat">
+      <div class="stat-label">Bot-owned open exposure</div>
+      <div class="stat-value tnum">${{ bs.bot_open_exposure }}</div>
+    </div>
+    <div class="stat-card stat-card--flat">
+      <div class="stat-label">Daily bot realized P&amp;L</div>
+      <div class="stat-value tnum">${{ bs.daily_bot_realized_pnl }}</div>
+    </div>
+    <div class="stat-card stat-card--flat">
+      <div class="stat-label">Active bot-owned orders</div>
+      <div class="stat-value tnum">{{ bs.active_bot_orders }}</div>
+    </div>
+    <div class="stat-card {{ 'stat-card--loss' if bs.kill_switch else 'stat-card--flat' }}">
+      <div class="stat-label">Kill switch</div>
+      <div class="stat-value" style="font-size:16px">{{ 'ACTIVE' if bs.kill_switch else 'clear' }}</div>
+      {% if bs.kill_switch_reason %}<div class="stat-sub">{{ bs.kill_switch_reason }}</div>{% endif %}
+    </div>
+  </div>
+
+  {% if not bs.capital_eligible %}
+  <div class="banner banner-warning" style="margin-bottom:14px">
+    <strong>Add capital to enable live automation</strong><br>
+    Live automated trading requires more than $5.00 in available Kalshi cash. Your current available cash is
+    {{ '$' + bs.available_cash if bs.available_cash is not none else 'unknown' }}.
+  </div>
+  {% elif bs.primary_blocker %}
+  <div class="banner banner-warning" style="margin-bottom:14px">
+    <strong>Primary blocker:</strong> {{ bs.primary_blocker }}
+  </div>
+  {% endif %}
+
+  <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:4px">
+    <button type="button" class="btn btn-secondary" data-bot-action="refresh-balance">Refresh balance</button>
+    <button type="button" class="btn btn-secondary" data-bot-action="reconcile">Reconcile account</button>
+    <a class="btn btn-secondary" href="https://kalshi.com/account" target="_blank" rel="noopener noreferrer">Add funds on Kalshi ↗</a>
+    {% if bs.kill_switch %}
+    <button type="button" class="btn btn-secondary" data-bot-action="reset-kill-switch">Reset kill switch</button>
+    {% else %}
+    <button type="button" class="btn btn-secondary" style="border-color:var(--color-loss);color:var(--color-loss)" data-bot-action="emergency-stop">Emergency stop</button>
+    {% endif %}
+  </div>
+
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;font-weight:600;color:var(--color-accent)">View details</summary>
+    <div style="margin-top:14px">
+      <div class="stat-grid" style="margin-bottom:16px">
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Worker last cycle</div>
+          <div class="stat-value tnum" style="font-size:14px">{{ worker_last_started|pacific('%b %-d, %H:%M %Z') if worker_last_started else 'never run' }}</div>
+          <div class="stat-sub">{{ worker_last_summary or '—' }}</div>
+        </div>
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Last reconciliation</div>
+          <div class="stat-value tnum" style="font-size:14px">{{ bs.last_reconciliation|pacific('%b %-d, %H:%M %Z') if bs.last_reconciliation else 'never run' }}</div>
+          <div class="stat-sub">{{ last_reconciliation_detail or '—' }}</div>
+        </div>
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Last balance refresh</div>
+          <div class="stat-value tnum" style="font-size:14px">{{ last_balance_refresh|pacific('%b %-d, %H:%M %Z') if last_balance_refresh else 'never run' }}</div>
+        </div>
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Latest weather data</div>
+          <div class="stat-value tnum" style="font-size:14px">{{ bs.latest_weather_data|pacific('%b %-d, %H:%M %Z') if bs.latest_weather_data else 'unavailable' }}</div>
+        </div>
+        <div class="stat-card stat-card--flat">
+          <div class="stat-label">Latest market data</div>
+          <div class="stat-value tnum" style="font-size:14px">{{ bs.latest_market_data|pacific('%b %-d, %H:%M %Z') if bs.latest_market_data else 'unavailable' }}</div>
+        </div>
+        <div class="stat-card {{ 'stat-card--loss' if consecutive_bot_losses > 0 else 'stat-card--flat' }}">
+          <div class="stat-label">Consecutive bot losses</div>
+          <div class="stat-value tnum">{{ consecutive_bot_losses }}</div>
+        </div>
+      </div>
+
+      <div class="section-head" style="margin-top:0">
+        <h4 style="font-size:14px">Fixed risk limits</h4>
+        <span class="section-head-rule"></span>
+      </div>
+      <div class="table-wrap" style="margin-bottom:16px">
+        <table class="table"><tbody>
+          {% for key, value in bs.fixed_risk_limits.items() %}
+          <tr><td>{{ key|replace('_', ' ')|title }}</td><td class="tnum">{{ value }}</td></tr>
+          {% endfor %}
+        </tbody></table>
+      </div>
+
+      <div class="section-head" style="margin-top:0">
+        <h4 style="font-size:14px">Recent bot activity</h4>
+        <span class="section-head-rule"></span>
+      </div>
+      {% if not recent_bot_events %}
+      <p class="empty">No bot-control actions recorded yet.</p>
+      {% else %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>When</th><th>Event</th><th>Mode</th><th>Reason</th><th>Actor</th><th>Detail</th></tr></thead>
+          <tbody>
+            {% for e in recent_bot_events %}
+            <tr>
+              <td class="tnum">{{ e.created_at|pacific('%b %-d, %H:%M:%S %Z') }}</td>
+              <td>{{ e.event_type }}</td>
+              <td>{{ e.requested_mode or e.effective_mode or '—' }}</td>
+              <td>{{ e.reason_code or '—' }}</td>
+              <td>{{ e.actor or '—' }}</td>
+              <td style="color:var(--color-neutral-600);font-size:13px">{{ e.note or e.detail or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      <div class="section-head">
+        <h4 style="font-size:14px">Recent bot-owned orders</h4>
+        <span class="section-head-rule"></span>
+      </div>
+      {% if not bs.recent_live_orders %}
+      <p class="empty">No production bot orders recorded.</p>
+      {% else %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Market</th><th>Outcome</th><th>Status</th><th>Filled</th><th>Reconciliation</th></tr></thead>
+          <tbody>{% for o in bs.recent_live_orders %}
+            <tr><td class="tnum">{{ o.market_ticker }}</td><td>{{ o.intended_outcome }}</td><td>{{ o.status }}</td><td class="tnum">{{ o.filled_count }}/{{ o.requested_count }}</td><td>{{ o.reconciliation_status }}</td></tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+      {% endif %}
+      <p class="section-note"><strong>Most recent execution error:</strong> {{ bs.most_recent_execution_error or 'none' }}</p>
+    </div>
+  </details>
+
+  <dialog class="details-modal" data-live-confirmation>
+    <div class="modal-inner">
+      <button type="button" class="modal-close" data-live-confirm-cancel aria-label="Close">×</button>
+      <h3>Enable real-money trading</h3>
+      <p>This strategy remains unvalidated and real money may be lost.</p>
+      <ul>
+        <li>Available production cash: <strong>$<span data-live-confirm-cash>{{ bs.available_cash or 'unknown' }}</span></strong></li>
+        <li>Maximum contracts per order: <strong>{{ bs.fixed_risk_limits.maximum_contracts_per_order }}</strong></li>
+        <li>Maximum order cost including estimated fees: <strong>${{ bs.fixed_risk_limits.maximum_order_cost_including_estimated_fees }}</strong></li>
+        <li>Maximum total bot exposure: <strong>${{ bs.fixed_risk_limits.maximum_total_bot_exposure }}</strong></li>
+        <li>Maximum daily loss: <strong>${{ bs.fixed_risk_limits.maximum_daily_realized_loss }}</strong></li>
+        <li>Maximum consecutive losses: <strong>{{ bs.fixed_risk_limits.maximum_consecutive_settled_losses }}</strong></li>
+      </ul>
+      <label>Type <strong>ENABLE LIVE TRADING</strong>
+        <input type="text" data-live-confirm-input autocomplete="off">
+      </label>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button type="button" class="btn btn-primary" data-live-confirm-submit>Enable live automation</button>
+        <button type="button" class="btn btn-secondary" data-live-confirm-cancel>Cancel</button>
+      </div>
+    </div>
+  </dialog>
+</div>
+
+{% if error %}
+<div class="banner banner-warning">{{ error }}</div>
+{% else %}
+
+<div class="stat-grid">
+  <div class="stat-card stat-card--flat">
+    <div class="stat-label">Cost</div>
+    <div class="stat-value tnum">${{ "%.2f"|format(total_cost) }}</div>
+  </div>
+  <div class="stat-card stat-card--flat">
+    <div class="stat-label">Market value</div>
+    <div class="stat-value tnum">{{ "$%.2f"|format(total_market_value) if total_market_value is not none else '—' }}</div>
+  </div>
+  <div class="stat-card {{ 'stat-card--flat' if total_market_value is none else ('stat-card--gain' if total_market_value >= total_cost else 'stat-card--loss') }}">
+    <div class="stat-label">Total return</div>
+    <div class="stat-value tnum">{{ "%+.2f"|format(total_market_value - total_cost) if total_market_value is not none else '—' }}</div>
+  </div>
+  <div class="stat-card {{ 'stat-card--gain' if total_realized_pnl >= 0 else 'stat-card--loss' }}">
+    <div class="stat-label">Realized P&amp;L</div>
+    <div class="stat-value tnum">{{ "%+.2f"|format(total_realized_pnl) }}</div>
+  </div>
+</div>
+
+<div class="section-head">
+  <h4>Positions ({{ rows|length }})</h4>
+  <span class="section-head-rule"></span>
+</div>
+{% if not rows %}
+<p class="empty">No open positions on your Kalshi account right now.</p>
+{% else %}
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr><th>Market</th><th>Side</th><th style="text-align:right">Contracts</th><th style="text-align:right">Cost</th><th style="text-align:right">Market value</th><th style="text-align:right">Total return</th><th style="text-align:right">Fees paid</th><th style="text-align:right">Updated</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>
+          {% if row.title %}
+          <div style="font-weight:600">{{ row.title }}</div>{% if row.outcome_label %}<div class="ticker-id" style="margin:0">{{ row.outcome_label }}</div>{% endif %}
+          {% else %}
+          {{ row.ticker }}
+          {% endif %}
+        </td>
+        <td><span class="side-badge side-{{ row.side|lower }}">{{ row.side|upper }}</span></td>
+        <td class="tnum" style="text-align:right">{{ "%.2f"|format(row.contracts) }}</td>
+        <td class="tnum" style="text-align:right">${{ "%.2f"|format(row.cost_dollars) }}</td>
+        <td class="tnum" style="text-align:right">{{ "$%.2f"|format(row.market_value_dollars) if row.market_value_dollars is not none else '—' }}</td>
+        <td class="tnum {{ 'pnl-positive' if row.total_return_dollars is not none and row.total_return_dollars >= 0 else 'pnl-negative' if row.total_return_dollars is not none else '' }}" style="text-align:right">
+          {% if row.total_return_dollars is not none %}
+          {{ "%+.2f"|format(row.total_return_dollars) }}{% if row.total_return_pct is not none %} ({{ "%+.0f%%"|format(row.total_return_pct * 100) }}){% endif %}
+          {% else %}
+          no live quote
+          {% endif %}
+        </td>
+        <td class="tnum" style="text-align:right">${{ "%.2f"|format(row.fees_paid_dollars) }}</td>
+        <td class="tnum" style="text-align:right;color:var(--color-neutral-500)">{{ row.last_updated_ts|pacific('%b %-d, %H:%M %Z') if row.last_updated_ts else '—' }}</td>
+        <td>
+          {% if row.kalshi_url %}
+          <a class="status-link" href="{{ row.kalshi_url }}" target="_blank" rel="noopener noreferrer">Trade on Kalshi ↗</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# ---- Settled trade history + why-we-lost breakdown (read-only) ---- #}
+<div class="section-head" style="margin-top:36px">
+  <h4>Trade history &amp; realized P&amp;L</h4>
+  <span class="section-head-rule"></span>
+</div>
+{% if settlements_error %}
+<div class="banner banner-warning">{{ settlements_error }}</div>
+{% elif not settlements %}
+<p class="empty">No settled trades on your Kalshi account yet.</p>
+{% else %}
+{% set s = settlement_summary %}
+<p class="section-note" style="margin-top:0">
+  Every market that has settled on your real account, split by whether it was one of this project's own
+  weather markets or a discretionary bet on something else — so you can see where the money actually went.
+  Net P&amp;L is payout minus cost minus fees.
+</p>
+<div class="table-wrap" style="margin-bottom:20px">
+  <table class="table">
+    <thead>
+      <tr><th>Category</th><th style="text-align:right">Settled</th><th style="text-align:right">Win rate</th><th style="text-align:right">Cost</th><th style="text-align:right">Payout</th><th style="text-align:right">Net P&amp;L</th></tr>
+    </thead>
+    <tbody>
+      {% for label, key in [('This project (weather)', 'weather'), ('Other markets (discretionary)', 'other'), ('All settled trades', 'total')] %}
+      {% set b = s[key] %}
+      {% if b.n %}
+      <tr {% if key == 'total' %}style="border-top:2px solid var(--color-neutral-300, #d8d2c4);font-weight:600"{% endif %}>
+        <td style="font-weight:600">{{ label }}</td>
+        <td class="tnum" style="text-align:right">{{ b.n }}</td>
+        <td class="tnum" style="text-align:right">{{ "%.0f%%"|format(100 * b.wins / b.n) }}</td>
+        <td class="tnum" style="text-align:right">${{ "%.2f"|format(b.cost) }}</td>
+        <td class="tnum" style="text-align:right">${{ "%.2f"|format(b.revenue) }}</td>
+        <td class="tnum {{ 'pnl-positive' if b.net >= 0 else 'pnl-negative' }}" style="text-align:right">{{ "%+.2f"|format(b.net) }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr><th>Market</th><th></th><th>Held</th><th>Result</th><th style="text-align:right">Cost</th><th style="text-align:right">Payout</th><th style="text-align:right">Net P&amp;L</th><th style="text-align:right">Settled</th></tr>
+    </thead>
+    <tbody>
+      {% for st in settlements %}
+      <tr>
+        <td style="font-weight:600">{{ st.ticker }}</td>
+        <td>
+          {% if is_weather_ticker(st.ticker) %}
+          <span class="status-badge status-partial">weather</span>
+          {% else %}
+          <span class="status-badge" style="background:var(--color-neutral-200, #eee);color:var(--color-neutral-600, #777)">other</span>
+          {% endif %}
+        </td>
+        <td><span class="side-badge side-{{ st.held_side }}">{{ st.held_side|upper }}</span></td>
+        <td>
+          <span class="status-badge status-{{ 'success' if st.won else 'failed' }}">{{ 'WON' if st.won else 'LOST' }} ({{ st.market_result|upper }})</span>
+        </td>
+        <td class="tnum" style="text-align:right">${{ "%.2f"|format(st.cost_dollars) }}</td>
+        <td class="tnum" style="text-align:right">${{ "%.2f"|format(st.revenue_dollars) }}</td>
+        <td class="tnum {{ 'pnl-positive' if st.net_pnl_dollars >= 0 else 'pnl-negative' }}" style="text-align:right">{{ "%+.2f"|format(st.net_pnl_dollars) }}</td>
+        <td class="tnum" style="text-align:right;color:var(--color-neutral-500)">{{ st.settled_time|pacific('%b %-d, %H:%M %Z') if st.settled_time else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endif %}

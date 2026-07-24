@@ -1,0 +1,117 @@
+[
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "current_observation_conditioned",
+    "strategy_version": "research-current-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "hard_lower_bound_truncation",
+    "strategy_version": "research-hard-lower-bound-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "raw_ensemble",
+    "strategy_version": "research-raw-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "empirical_remaining_day_residual",
+    "strategy_version": "research-residual-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "logistic_calibration",
+    "strategy_version": "research-logistic-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "isotonic_calibration",
+    "strategy_version": "research-isotonic-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_prior_weather_update",
+    "strategy_version": "research-market-prior-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "conservative_no_trade_filter",
+    "strategy_version": "research-conservative-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "newly_impossible_brackets",
+    "strategy_version": "research-impossible-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "late_day_observation_filter",
+    "strategy_version": "research-late-day-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "low_model_disagreement",
+    "strategy_version": "research-low-disagreement-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_blend_0.00",
+    "strategy_version": "research-blend-0.00-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_blend_0.10",
+    "strategy_version": "research-blend-0.10-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_blend_0.20",
+    "strategy_version": "research-blend-0.20-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_blend_0.30",
+    "strategy_version": "research-blend-0.30-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_blend_0.50",
+    "strategy_version": "research-blend-0.50-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_blend_0.75",
+    "strategy_version": "research-blend-0.75-v1"
+  },
+  {
+    "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
+    "strategy_name": "market_blend_1.00",
+    "strategy_version": "research-blend-1.00-v1"
+  },
+  {
+    "reason": "Per-model point-in-time forecast values were not persisted in alerts; the live database cannot evaluate this candidate without refetching history.",
+    "strategy_name": "individual_gfs",
+    "strategy_version": "research-gfs-v1"
+  },
+  {
+    "reason": "Per-model point-in-time forecast values were not persisted in alerts; the live database cannot evaluate this candidate without refetching history.",
+    "strategy_name": "individual_ecmwf",
+    "strategy_version": "research-ecmwf-v1"
+  },
+  {
+    "reason": "Per-model point-in-time forecast values were not persisted in alerts; the live database cannot evaluate this candidate without refetching history.",
+    "strategy_name": "individual_icon",
+    "strategy_version": "research-icon-v1"
+  },
+  {
+    "reason": "No synchronized executable bid/ask depth was persisted; midpoint or last-price differences cannot be called arbitrage.",
+    "strategy_name": "cross_bracket_executable_consistency",
+    "strategy_version": "research-cross-bracket-v1"
+  },
+  {
+    "reason": "Hourly forecast trajectories, forecast publication timestamps, and observation publication/revision timestamps were not persisted. A remaining-hour maximum simulation would require unavailable future-safe inputs.",
+    "strategy_name": "remaining_hour_maximum_simulation",
+    "strategy_version": "research-remaining-hour-simulation-v1"
+  }
+]

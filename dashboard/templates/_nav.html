@@ -9,8 +9,7 @@
       </svg>
       <span class="nav-brand-name">Kalshi Weather Signals</span>
     </a>
-    <a class="nav-link{{ ' is-active' if request.endpoint == 'portfolio' }}" href="{{ url_for('portfolio') }}">Your Kalshi portfolio</a>
-    <a class="nav-link{{ ' is-active' if request.endpoint == 'paper_trading' }}" href="{{ url_for('paper_trading') }}">Paper trading bot</a>
+    <a class="nav-link{{ ' is-active' if request.endpoint in ('portfolio', 'paper_trading') }}" href="{{ url_for('portfolio') }}">Portfolio</a>
     <a class="nav-link{{ ' is-active' if request.endpoint == 'backtest' }}" href="{{ url_for('backtest') }}">Backtest results</a>
     <a class="nav-link{{ ' is-active' if request.endpoint == 'status' }}" href="{{ url_for('status') }}">System status</a>
     {% if actionable_alerts is defined %}

@@ -2,21 +2,51 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
 from dotenv import load_dotenv
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+import bot_control
 from edge.calculator import bracket_sum_deviation
-from kalshi_client import KalshiAuthError, KalshiClient, Position, market_url, parse_event_date
-from paper_trading import STARTING_BANKROLL_USD, cash_reserve_fraction_setting, deployable_cash
+from kalshi_client import KalshiAuthError, KalshiClient, Position, Settlement, market_url, parse_event_date
+from backtest.calibration import trade_stats
+from bot_control import (
+    ALL_MODES,
+    BotControlError,
+    disable_live,
+    enable_live,
+    get_bot_state,
+    list_recent_events,
+    record_reconcile,
+    record_refresh_balance,
+    record_run_once,
+    reset_kill_switch,
+    start_bot,
+    stop_bot,
+    trigger_kill_switch,
+)
+from capital.eligibility import evaluate_capital_eligibility
+from db.connection import get_db as get_core_db
+from live_trading.repository import PostgresLiveRepository
+from live_trading.risk import fixed_limits_dict
+from live_trading.service import build_live_service
+from paper_trading import (
+    STARTING_BANKROLL_USD,
+    STRATEGY_VERSION,
+    cash_reserve_fraction_setting,
+    deployable_cash,
+)
 from price_feed.cache import get_cached_prices
 from sizing.kelly import (
     BracketInput,
@@ -27,6 +57,7 @@ from sizing.kelly import (
 )
 from monitoring import comparable_trend, summarize
 from monitoring.trend import REVISIT_STREAK
+from validation.summary import build_validation_summary
 from weather.calibration_override import load_override, override_metadata
 from weather.calibration_params import CALIBRATION, get_calibration
 from weather.nws_observations import fetch_today_extreme
@@ -65,9 +96,8 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 # form (see limiter setup below) to cap brute-force attacks.
 app.permanent_session_lifetime = timedelta(days=5)
 # Lax, not None: the session cookie shouldn't ride along on cross-site requests.
-# There are no state-changing trading actions exposed here (this dashboard is
-# read-only over Kalshi), so the CSRF surface is small — /logout is the only
-# meaningful POST — but Lax costs nothing and closes it.
+# Live-control actions use a session-bound CSRF token as well; Lax provides an
+# additional browser-level boundary without interfering with normal navigation.
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # SESSION_COOKIE_SECURE stays False deliberately: the droplet serves plain HTTP
 # (no domain, so no Let's Encrypt cert), and setting Secure would stop the
@@ -162,6 +192,481 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+# ---- Trading-bot control API -----------------------------------------------
+#
+# The generic mode API remains PAPER-only so an old `start(mode=LIVE)` call
+# cannot bypass production checks. The dedicated live preflight/enable/disable
+# routes below are the sole path into persisted production execution.
+
+
+def _actor() -> str:
+    # No per-user identity beyond "holds a valid passcode" exists in this
+    # single-shared-login dashboard — remote_addr is the closest thing to a
+    # traceable actor, consistent with the rate limiter's own key_func above.
+    return f"dashboard:{request.remote_addr}"
+
+
+def _kalshi_environment() -> str:
+    configured = os.environ.get("KALSHI_ENVIRONMENT", "production").strip().lower()
+    if configured in {"demo", "sandbox"}:
+        return "demo"
+    base_url = (
+        os.environ.get("KALSHI_BASE_URL")
+        or os.environ.get("KALSHI_PRODUCTION_BASE_URL")
+        or ""
+    )
+    if (
+        "external-api.kalshi.com" in base_url
+        or "api.elections.kalshi.com" in base_url
+        or not base_url
+    ):
+        return "prod"
+    if "demo-api.kalshi.co" in base_url:
+        return "demo"
+    return "unknown"
+
+
+def _csrf_token() -> str:
+    """Session-bound CSRF token for /api/trading-bot/* mutations. No
+    flask-wtf/CSRF middleware is installed in this project (the CSRF surface
+    was small enough to skip one before this endpoint set existed — see the
+    old comment on SESSION_COOKIE_SAMESITE above); this is a minimal
+    same-origin anti-forgery control built for this one write surface
+    instead of a new dependency. See DECISIONS.md's "Production trading
+    dashboard security" decision.
+    """
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+app.jinja_env.globals["csrf_token"] = _csrf_token
+
+
+def _require_csrf() -> None:
+    expected = session.get("csrf_token")
+    provided = request.headers.get("X-CSRF-Token")
+    if not expected or not provided or not secrets.compare_digest(expected, provided):
+        abort(403, description="Missing or invalid CSRF token.")
+
+
+_BOT_ERROR_STATUS_CODES = {
+    "INVALID_MODE": 400,
+    "NOT_IMPLEMENTED": 501,
+    "KILL_SWITCH_ACTIVE": 409,
+    "DATABASE_UNAVAILABLE": 503,
+    "DATABASE_ERROR": 500,
+}
+
+
+def _latest_balance_snapshot() -> tuple[Decimal | None, datetime | None]:
+    """Most recent successfully persisted Refresh Balance result, or
+    (None, None) if one has never run. Deliberately does NOT hit Kalshi's
+    API on every status poll — a live fetch happens only when the operator
+    explicitly presses Refresh Balance (or Reconcile), same
+    don't-hammer-the-read-API discipline as this project's price-fetch
+    batching elsewhere."""
+    for event in list_recent_events(limit=50):
+        if event.get("event_type") == "refresh_balance" and event.get("detail"):
+            try:
+                payload = json.loads(event["detail"])
+                as_of = datetime.fromisoformat(payload["as_of"]) if payload.get("as_of") else None
+                return Decimal(payload["available_cash"]), as_of
+            except (KeyError, ValueError, TypeError):
+                continue
+    return None, None
+
+
+def _capital_eligibility_snapshot() -> dict:
+    available_cash, as_of = _latest_balance_snapshot()
+    return evaluate_capital_eligibility(
+        environment=_kalshi_environment(), available_cash=available_cash, balance_as_of=as_of,
+    ).to_dict()
+
+
+def _live_persistence_snapshot() -> dict:
+    defaults = {
+        "active_bot_orders": 0,
+        "bot_open_exposure": Decimal("0"),
+        "daily_bot_realized_pnl": Decimal("0"),
+        "last_cycle_at": None,
+        "last_cycle_status": None,
+        "last_execution_error": None,
+        "last_reconciliation": None,
+        "reconciliation_healthy": False,
+        "available_cash": None,
+        "latest_weather_data": None,
+        "latest_market_data": None,
+        "worker_healthy": False,
+        "recent_live_orders": [],
+    }
+    connection = get_core_db()
+    if connection is None:
+        return defaults
+    try:
+        repository = PostgresLiveRepository(connection)
+        summary = repository.status_summary()
+        reconciliation = repository.latest_reconciliation()
+        timestamps = repository.readiness_timestamps()
+        recent_orders = repository.recent_orders(limit=12)
+        for order in recent_orders:
+            for key, value in list(order.items()):
+                if isinstance(value, datetime):
+                    order[key] = value.isoformat()
+                elif isinstance(value, Decimal):
+                    order[key] = str(value)
+        return {
+            **defaults,
+            **summary,
+            "last_reconciliation": reconciliation["finished_at"] if reconciliation else None,
+            "reconciliation_healthy": bool(reconciliation and reconciliation["healthy"]),
+            "available_cash": reconciliation["available_cash"] if reconciliation else None,
+            "latest_weather_data": timestamps["weather_data_at"],
+            "latest_market_data": timestamps["market_data_at"],
+            "worker_healthy": repository.worker_healthy(),
+            "recent_live_orders": recent_orders,
+        }
+    except Exception:
+        return defaults
+    finally:
+        connection.close()
+
+
+def _bot_status_payload() -> dict:
+    state = get_bot_state()
+    live = _live_persistence_snapshot()
+    available_cash = live["available_cash"]
+    balance_as_of = live["last_reconciliation"]
+    if available_cash is None:
+        available_cash, balance_as_of = _latest_balance_snapshot()
+    eligibility = evaluate_capital_eligibility(
+        environment=_kalshi_environment(),
+        available_cash=available_cash,
+        balance_as_of=balance_as_of,
+        reconciliation_healthy=live["reconciliation_healthy"],
+    ).to_dict()
+    blockers: list[str] = []
+    if not eligibility["eligible"]:
+        blockers.append(eligibility["reason_code"])
+    if state.kill_switch:
+        blockers.append("KILL_SWITCH_ACTIVE")
+    if not live["reconciliation_healthy"]:
+        blockers.append("RECONCILIATION_REQUIRED")
+    if not live["worker_healthy"]:
+        blockers.append("WORKER_UNHEALTHY")
+    now = datetime.now(UTC)
+    if (
+        live["latest_weather_data"] is None
+        or now - live["latest_weather_data"] > timedelta(minutes=30)
+    ):
+        blockers.append("STALE_WEATHER_DATA")
+    if (
+        live["latest_market_data"] is None
+        or now - live["latest_market_data"] > timedelta(minutes=30)
+    ):
+        blockers.append("STALE_KALSHI_QUOTES")
+    if live["last_execution_error"]:
+        status = "ERROR"
+    elif blockers:
+        status = "BLOCKED"
+    elif state.live_enabled:
+        status = "RUNNING"
+    else:
+        status = "STOPPED"
+    return dict(
+        live_enabled=state.live_enabled,
+        status=status,
+        available_cash=eligibility["available_cash"],
+        capital_eligible=eligibility["eligible"],
+        blockers=blockers,
+        primary_blocker=blockers[0] if blockers else None,
+        last_successful_cycle=(
+            live["last_cycle_at"] if live["last_cycle_status"] == "RUNNING" else None
+        ),
+        bot_open_exposure=str(live["bot_open_exposure"]),
+        daily_bot_realized_pnl=str(live["daily_bot_realized_pnl"]),
+        active_bot_orders=live["active_bot_orders"],
+        kill_switch=state.kill_switch,
+        kill_switch_reason=state.kill_switch_reason,
+        last_reconciliation=live["last_reconciliation"],
+        latest_weather_data=live["latest_weather_data"],
+        latest_market_data=live["latest_market_data"],
+        worker_healthy=live["worker_healthy"],
+        recent_live_orders=live["recent_live_orders"],
+        most_recent_execution_error=live["last_execution_error"],
+        fixed_risk_limits=fixed_limits_dict(),
+        # Compatibility fields used by the paper-control strip.
+        requested_mode=state.effective_mode,
+        effective_mode=state.effective_mode,
+        environment=_kalshi_environment(),
+        enabled=state.enabled,
+        strategy_name=state.strategy_name or bot_control.STRATEGY_NAME,
+        strategy_version=state.strategy_version or STRATEGY_VERSION,
+        strategy_validation_status="FAILED",
+        capital_eligibility=eligibility,
+        production_activation_status=status,
+        updated_at=state.updated_at.isoformat() if state.updated_at else None,
+        actor=state.actor,
+        active_risk_limits=fixed_limits_dict(),
+    )
+
+
+@app.route("/api/trading-bot/status", methods=["GET"])
+def api_bot_status():
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/activity", methods=["GET"])
+def api_bot_activity():
+    events = list_recent_events(limit=50)
+    for event in events:
+        if event.get("created_at"):
+            event["created_at"] = event["created_at"].isoformat()
+    return jsonify(events=events)
+
+
+@app.route("/api/trading-bot/start", methods=["POST"])
+def api_bot_start():
+    _require_csrf()
+    payload = request.get_json(silent=True) or {}
+    requested_mode = (payload.get("mode") or "").strip().upper()
+    if requested_mode not in ALL_MODES:
+        return jsonify(error=f"mode must be one of {sorted(ALL_MODES)}", reason_code="INVALID_MODE"), 400
+    try:
+        start_bot(requested_mode, actor=_actor(), note=payload.get("note"))
+    except BotControlError as exc:
+        status_code = _BOT_ERROR_STATUS_CODES.get(exc.reason_code, 400)
+        return jsonify(error=str(exc), reason_code=exc.reason_code, **_bot_status_payload()), status_code
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/stop", methods=["POST"])
+def api_bot_stop():
+    _require_csrf()
+    stop_bot(actor=_actor())
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/run-once", methods=["POST"])
+def api_bot_run_once():
+    _require_csrf()
+    state = get_bot_state()
+    try:
+        if state.live_enabled:
+            built = build_live_service()
+            if built is None:
+                return jsonify(error="Live database is unavailable."), 503
+            service, connection = built
+            try:
+                result = service.run_cycle(state)
+            finally:
+                service.client.close()
+                connection.close()
+            if result.status == "ERROR":
+                return jsonify(error=result.error, **_bot_status_payload()), 500
+        else:
+            import scripts.run_paper_trading as run_paper_trading
+
+            run_paper_trading.main()
+    except Exception as exc:
+        return jsonify(error=f"Cycle failed: {exc.__class__.__name__}: {exc}"), 500
+    record_run_once(actor=_actor(), detail="Manual one-off cycle triggered from the dashboard.")
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/reconcile", methods=["POST"])
+def api_bot_reconcile():
+    _require_csrf()
+    built = build_live_service()
+    if built is None:
+        return jsonify(error="Could not reconcile: database unavailable."), 503
+    service, connection = built
+    try:
+        result = service.reconcile(actor=_actor())
+    except Exception as exc:
+        return jsonify(error=f"Could not reconcile: {exc.__class__.__name__}: {exc}"), 502
+    finally:
+        service.client.close()
+        connection.close()
+    detail = (
+        f"{result.reconciled_orders} bot order(s), {result.fills} fill(s), "
+        f"{result.positions} position(s), {result.settlements} settlement(s); "
+        f"healthy={result.healthy}."
+    )
+    record_reconcile(actor=_actor(), detail=detail)
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/refresh-balance", methods=["POST"])
+def api_bot_refresh_balance():
+    _require_csrf()
+    if _kalshi_environment() != "prod":
+        return jsonify(error="Production balance requires the production Kalshi environment."), 409
+    try:
+        with KalshiClient.from_env() as client:
+            balance = client.get_balance()
+    except Exception as exc:
+        return jsonify(error=f"Could not fetch balance: {exc.__class__.__name__}: {exc}"), 502
+    detail = json.dumps({
+        "available_cash": str(balance.available_dollars),
+        "as_of": balance.as_of.isoformat() if balance.as_of else None,
+    })
+    record_refresh_balance(actor=_actor(), detail=detail)
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/emergency-stop", methods=["POST"])
+@app.route("/api/trading-bot/kill", methods=["POST"])
+def api_bot_kill():
+    _require_csrf()
+    payload = request.get_json(silent=True) or {}
+    reason = (payload.get("reason") or "manual emergency stop from the dashboard").strip()
+    trigger_kill_switch(reason, actor=_actor())
+    cancelled_orders = 0
+    cancellation_error = None
+    built = build_live_service()
+    if built is not None:
+        service, connection = built
+        try:
+            cancelled_orders = service.cancel_bot_orders(force=True, actor=_actor())
+        except Exception as exc:
+            cancellation_error = f"{exc.__class__.__name__}: {exc}"
+        finally:
+            service.client.close()
+            connection.close()
+    result = _bot_status_payload()
+    result["cancelled_orders"] = cancelled_orders
+    result["cancelled_orders_note"] = (
+        "Only persisted bot-owned resting orders were eligible for cancellation; "
+        "manual Kalshi orders were not touched."
+    )
+    if cancellation_error:
+        result["cancellation_error"] = cancellation_error
+    return jsonify(result)
+
+
+@app.route("/api/trading-bot/live/enable", methods=["POST"])
+def api_bot_live_enable():
+    _require_csrf()
+    payload = request.get_json(silent=True) or {}
+    if payload.get("confirmation") != "ENABLE LIVE TRADING":
+        return jsonify(
+            error="Type exactly ENABLE LIVE TRADING to confirm.",
+            reason_code="CONFIRMATION_REQUIRED",
+            **_bot_status_payload(),
+        ), 400
+    if _kalshi_environment() != "prod":
+        return jsonify(
+            error="Live automation is production-only.",
+            reason_code="PRODUCTION_ENVIRONMENT_REQUIRED",
+            **_bot_status_payload(),
+        ), 409
+    built = build_live_service()
+    if built is None:
+        return jsonify(error="Live database is unavailable."), 503
+    service, connection = built
+    try:
+        reconciliation = service.reconcile(actor=_actor())
+        blockers = service.enablement_blockers(get_bot_state(), reconciliation)
+        if blockers:
+            response = _bot_status_payload()
+            response.update(
+                error="Live automation is blocked.",
+                reason_code=blockers[0],
+                blockers=blockers,
+            )
+            return jsonify(response), 409
+        enable_live(
+            actor=_actor(),
+            strategy_version=STRATEGY_VERSION,
+            note=(
+                "Owner confirmed ENABLE LIVE TRADING after fresh balance, "
+                "reconciliation, credentials, data, exchange, and worker checks."
+            ),
+        )
+    except BotControlError as exc:
+        return jsonify(error=str(exc), reason_code=exc.reason_code), 409
+    except Exception as exc:
+        return jsonify(error=f"Could not enable live automation: {exc.__class__.__name__}: {exc}"), 502
+    finally:
+        service.client.close()
+        connection.close()
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/live/preflight", methods=["POST"])
+def api_bot_live_preflight():
+    """Fresh, backend-only readiness check performed before showing the modal."""
+    _require_csrf()
+    if _kalshi_environment() != "prod":
+        return jsonify(
+            error="Live automation is production-only.",
+            reason_code="PRODUCTION_ENVIRONMENT_REQUIRED",
+        ), 409
+    built = build_live_service()
+    if built is None:
+        return jsonify(error="Live database is unavailable."), 503
+    service, connection = built
+    try:
+        reconciliation = service.reconcile(actor=_actor())
+        record_reconcile(
+            actor=_actor(),
+            detail=(
+                "Live preflight: "
+                f"healthy={reconciliation.healthy}, cash={reconciliation.available_cash}."
+            ),
+        )
+        blockers = service.enablement_blockers(get_bot_state(), reconciliation)
+        response = _bot_status_payload()
+        response["available_cash"] = str(reconciliation.available_cash)
+        response["blockers"] = blockers
+        response["primary_blocker"] = blockers[0] if blockers else None
+        if blockers:
+            response.update(error="Live automation is blocked.", reason_code=blockers[0])
+            return jsonify(response), 409
+        return jsonify(response)
+    except Exception as exc:
+        return jsonify(error=f"Live preflight failed: {exc.__class__.__name__}: {exc}"), 502
+    finally:
+        service.client.close()
+        connection.close()
+
+
+@app.route("/api/trading-bot/live/disable", methods=["POST"])
+def api_bot_live_disable():
+    _require_csrf()
+    disable_live(
+        actor=_actor(),
+        note="Live automation disabled; reconciliation and settlement processing continue.",
+    )
+    return jsonify(_bot_status_payload())
+
+
+@app.route("/api/trading-bot/orders", methods=["GET"])
+def api_bot_orders():
+    connection = get_core_db()
+    if connection is None:
+        return jsonify(orders=[], error="Database unavailable."), 503
+    try:
+        orders = PostgresLiveRepository(connection).recent_orders(limit=100)
+        for order in orders:
+            for key, value in list(order.items()):
+                if isinstance(value, (datetime, Decimal)):
+                    order[key] = value.isoformat() if isinstance(value, datetime) else str(value)
+        return jsonify(orders=orders)
+    finally:
+        connection.close()
+
+
+@app.route("/api/trading-bot/reset-kill-switch", methods=["POST"])
+def api_bot_reset_kill_switch():
+    _require_csrf()
+    reset_kill_switch(actor=_actor())
+    return jsonify(_bot_status_payload())
 
 
 @dataclass(frozen=True)
@@ -505,6 +1010,46 @@ def _pipeline_status() -> tuple[dict[str, PipelineRun], list[PipelineRun], str |
         return {}, [], f"Couldn't connect to DATABASE_URL ({exc.__class__.__name__})."
 
 
+def _automated_trading_context() -> dict:
+    """Additional fields for the Automated Trading panel beyond what
+    _paper_trading_context/_bot_status_payload already computed: worker
+    health reuses _pipeline_status() (the exact same source /status reads,
+    so the two pages can never disagree about whether the worker is
+    healthy), and reconciliation/refresh-balance history reuses
+    bot_control's own event log rather than a new table."""
+    latest, _, _ = _pipeline_status()
+    worker_run = latest.get("run_paper_trading")
+
+    events = list_recent_events(limit=50)
+    last_reconcile = next((e for e in events if e["event_type"] == "reconcile"), None)
+    last_refresh = next((e for e in events if e["event_type"] == "refresh_balance"), None)
+
+    return dict(
+        worker_last_started=worker_run.started_at if worker_run else None,
+        worker_last_finished=worker_run.finished_at if worker_run else None,
+        worker_last_status=worker_run.status if worker_run else None,
+        worker_last_summary=worker_run.summary if worker_run else None,
+        last_reconciliation=last_reconcile["created_at"] if last_reconcile else None,
+        last_reconciliation_detail=last_reconcile["detail"] if last_reconcile else None,
+        last_balance_refresh=last_refresh["created_at"] if last_refresh else None,
+        recent_bot_events=events[:12],
+    )
+
+
+@app.route("/audit/strategy-integrity")
+def strategy_integrity_audit():
+    """Renders logs/audit/strategy-integrity-latest.md (written by
+    scripts/run_strategy_integrity_audit.py) so the compact validation
+    card's "View integrity audit" link goes somewhere real instead of a
+    dead link — this project has never had a route for it before."""
+    report_path = Path(__file__).resolve().parent.parent / "logs/audit/strategy-integrity-latest.md"
+    try:
+        report_text = report_path.read_text()
+    except OSError:
+        report_text = None
+    return render_template("strategy_integrity_audit.html", report_text=report_text, report_path=str(report_path))
+
+
 @app.route("/status")
 def status():
     latest, history, db_error = _pipeline_status()
@@ -733,7 +1278,23 @@ def backtest():
         override_diff=override_diff,
         trend=trend,
         revisit_streak=REVISIT_STREAK,
+        investigation=_strategy_investigation_summary(),
     )
+
+
+def _strategy_investigation_summary() -> dict | None:
+    """Load the reproducible research headline without requiring a DB query."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "artifacts"
+        / "strategy_investigation"
+        / "final_summary.json"
+    )
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 @dataclass(frozen=True)
@@ -741,8 +1302,8 @@ class PortfolioRow:
     """One real position on the user's actual Kalshi account, enriched with
     the market's own question/outcome text and a live mark-to-market —
     distinct from paper_trades, which is this project's own simulation and
-    never touches the real account. Read-only: nothing in this codebase
-    places, cancels, or modifies a real order.
+    never touches the real account. Automated bot orders are separately
+    identified and persisted by `live_trading`.
 
     `cost_dollars` is Kalshi's own `market_exposure_dollars` field (their
     docs call it "aggregate position cost") — confirmed live 2026-07-19 this
@@ -856,28 +1417,82 @@ def _fetch_portfolio() -> tuple[list[PortfolioRow], str | None, datetime]:
         return [], f"Couldn't fetch your Kalshi portfolio ({exc.__class__.__name__}): {exc}", fetched_at
 
 
-@app.route("/portfolio")
-def portfolio():
+def _is_weather_ticker(ticker: str) -> bool:
+    """Whether a settled market is one of this project's own weather series
+    (high/low daily temperature, `KXHIGH*`/`KXLOWT*`). Everything else on the
+    real account — the FIFA World Cup, NBA, etc. markets it's actually been
+    traded on — is discretionary, nothing this system ever produced a signal
+    for. Used to answer "how much of the real loss was the weather model vs.
+    unrelated bets."""
+    return ticker.startswith("KXHIGH") or ticker.startswith("KXLOWT")
+
+
+def _settlement_summary(settlements: list[Settlement]) -> dict:
+    """Weather-vs-other realized-P&L breakdown of settled real trades — pure,
+    so it's unit-testable. Answers, in dollars, where the real account's money
+    actually went: this project's weather model, or discretionary bets on
+    unrelated markets."""
+
+    def agg(rows: list[Settlement]) -> dict:
+        return dict(
+            n=len(rows),
+            wins=sum(1 for s in rows if s.won),
+            cost=round(sum(s.cost_dollars for s in rows), 2),
+            revenue=round(sum(s.revenue_dollars for s in rows), 2),
+            fees=round(sum(s.fee_dollars for s in rows), 2),
+            net=round(sum(s.net_pnl_dollars for s in rows), 2),
+        )
+
+    weather = [s for s in settlements if _is_weather_ticker(s.ticker)]
+    other = [s for s in settlements if not _is_weather_ticker(s.ticker)]
+    return {"weather": agg(weather), "other": agg(other), "total": agg(settlements)}
+
+
+def _fetch_settlements() -> tuple[list[Settlement], str | None]:
+    """Real settled-market history from the Kalshi account (read-only, GET
+    /portfolio/settlements). Most-recent first. Degrades to an empty list plus
+    an error string rather than failing the whole Portfolio page."""
+    try:
+        with KalshiClient.from_env() as client:
+            settlements = client.get_settlements()
+        settlements.sort(key=lambda s: s.settled_time or "", reverse=True)
+        return settlements, None
+    except KalshiAuthError:
+        return [], "KALSHI_API_KEY_ID / KALSHI_PRIVATE_KEY_PATH aren't configured for portfolio access."
+    except Exception as exc:
+        return [], f"Couldn't fetch your Kalshi trade history ({exc.__class__.__name__}): {exc}"
+
+
+def _portfolio_context() -> dict:
+    """Template vars for the "Your Kalshi portfolio" tab — the user's real,
+    read-only Kalshi account positions and settled trade history. Split out of
+    the old /portfolio route 2026-07-22 so the combined /portfolio page can
+    render this tab alongside the paper-trading tab in one request."""
     rows, error, fetched_at = _fetch_portfolio()
     total_cost = sum(r.cost_dollars for r in rows)
     known_market_values = [r.market_value_dollars for r in rows if r.market_value_dollars is not None]
     total_market_value = sum(known_market_values) if len(known_market_values) == len(rows) else None
     total_realized_pnl = sum(r.realized_pnl_dollars for r in rows)
-    return render_template(
-        "portfolio.html",
+    settlements, settlements_error = _fetch_settlements()
+    return dict(
         error=error,
         rows=rows,
         fetched_at=fetched_at,
         total_cost=total_cost,
         total_market_value=total_market_value,
         total_realized_pnl=total_realized_pnl,
+        settlements=settlements,
+        settlements_error=settlements_error,
+        settlement_summary=_settlement_summary(settlements),
+        is_weather_ticker=_is_weather_ticker,
     )
 
 
 _PAPER_TRADE_COLUMNS = (
     "pt.id, pt.opened_at, pt.market_ticker, pt.event_ticker, pt.series_ticker, pt.city, pt.bracket_label, pt.side, "
     "pt.entry_price, pt.contracts, pt.entry_fee, pt.cost_basis, pt.entry_model_probability, pt.entry_edge, "
-    "pt.status, pt.closed_at, pt.close_reason, pt.exit_price, pt.exit_fee, pt.payout, pt.realized_pnl"
+    "pt.status, pt.closed_at, pt.close_reason, pt.exit_price, pt.exit_fee, pt.payout, pt.realized_pnl, "
+    "pt.strategy_version"
 )
 
 
@@ -904,6 +1519,10 @@ class PaperTrade:
     exit_fee: float | None
     payout: float | None
     realized_pnl: float | None
+    # Stamped at open time from paper_trading/engine.py::STRATEGY_VERSION.
+    # None for rows opened before this column existed (2026-07-23) — can't be
+    # reconstructed after the fact, same as alerts.lead_days' own null rows.
+    strategy_version: str | None
     # Both from the `alerts` table (see _fetch_paper_trades' join), not
     # paper_trades columns themselves — paper_trades never stored either,
     # but every position was opened from a real alerts row for the same
@@ -1141,8 +1760,36 @@ def _group_closed_by_date(closed_trades: list[PaperTrade]) -> list[dict]:
     return groups
 
 
-@app.route("/paper-trading")
-def paper_trading():
+def _fetch_validation_summary(trade_performance, predicted_ev_total: float, realized_pnl_total: float):
+    """Builds the compact validation card's data (validation/summary.py),
+    reusing trade_performance/predicted_ev_total/realized_pnl_total that
+    _paper_trading_context already computed rather than requerying
+    paper_trades a second time. Returns None if the database is
+    unreachable — the template renders an honest "unavailable" state, not a
+    fabricated number."""
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        return None
+    import psycopg
+
+    try:
+        with psycopg.connect(database_url, connect_timeout=5) as conn, conn.cursor() as cur:
+            return build_validation_summary(
+                cur,
+                strategy_name=bot_control.STRATEGY_NAME,
+                strategy_version=STRATEGY_VERSION,
+                trade_performance=trade_performance,
+                model_implied_ev=predicted_ev_total,
+                realized_pnl=realized_pnl_total,
+            )
+    except psycopg.OperationalError:
+        return None
+
+
+def _paper_trading_context() -> dict:
+    """Template vars for the paper-trading bot tab. Split out of the old
+    /paper-trading route 2026-07-22 so the combined /portfolio page can render
+    this tab alongside the real-Kalshi-account tab in one request."""
     fetched_at = datetime.now(UTC)
     trades, db_error = _fetch_paper_trades()
     open_trades = [t for t in trades if t.status == "open"]
@@ -1194,12 +1841,39 @@ def paper_trading():
     wins = [t for t in closed_since_reset if (t.realized_pnl or 0) > 0]
     win_rate = (len(wins) / len(closed_since_reset)) if closed_since_reset else None
 
+    # trade_stats needs chronological (oldest-first) order for drawdown/streaks
+    # to mean anything — _fetch_paper_trades returns newest-first for display,
+    # so re-sort just for this. Same closed_since_reset scope as realized_pnl_total
+    # above, for the same reason (a reset shouldn't count pre-reset trades).
+    chronological_since_reset = sorted(
+        closed_since_reset, key=lambda t: t.closed_at or datetime.min.replace(tzinfo=UTC)
+    )
+    trade_performance = trade_stats([t.realized_pnl or 0.0 for t in chronological_since_reset])
+
     close_reason_counts: dict[str, int] = defaultdict(int)
     for t in closed_trades:
         close_reason_counts[t.close_reason or "unknown"] += 1
 
-    return render_template(
-        "paper_trading.html",
+    # "N of M" scoped to all trades, not closed_since_reset — a bankroll reset
+    # and a strategy-version bump are independent events (see STRATEGY_VERSION's
+    # own docstring in paper_trading/engine.py), so this answers "how much of
+    # the visible history reflects the config actually running right now,"
+    # regardless of reset boundaries.
+    trades_on_current_version = sum(1 for t in trades if t.strategy_version == STRATEGY_VERSION)
+    validation_summary = _fetch_validation_summary(trade_performance, predicted_ev_total, realized_pnl_total)
+
+    # Automated Trading panel fields — both reuse data this function already
+    # collected rather than requerying paper_trades a second time.
+    today = fetched_at.date()
+    daily_realized_pnl = sum(
+        t.realized_pnl or 0 for t in closed_since_reset if t.closed_at and t.closed_at.date() == today
+    )
+    # trade_performance.current_streak is negative during a losing streak —
+    # same convention the compact validation card's "Streaks" stat already
+    # reads, just unsigned here for direct display as a loss count.
+    consecutive_bot_losses = max(0, -trade_performance.current_streak)
+
+    return dict(
         db_error=db_error,
         fetched_at=fetched_at,
         starting_bankroll=STARTING_BANKROLL_USD,
@@ -1223,7 +1897,37 @@ def paper_trading():
         wins=len(wins),
         losses=len(closed_since_reset) - len(wins),
         close_reason_counts=dict(close_reason_counts),
+        trade_performance=trade_performance,
+        strategy_version=STRATEGY_VERSION,
+        trades_on_current_version=trades_on_current_version,
+        trades_total=len(trades),
+        validation_summary=validation_summary,
+        bot_status=_bot_status_payload(),
+        daily_realized_pnl=daily_realized_pnl,
+        consecutive_bot_losses=consecutive_bot_losses,
     )
+
+
+@app.route("/portfolio")
+def portfolio():
+    """Combined Portfolio page: the paper-trading bot and the real Kalshi
+    account, as two tabs (portfolio.html). Merged 2026-07-22 from the former
+    separate /portfolio and /paper-trading pages. Both tab contexts are built
+    every request so _live_refresh.html keeps both fresh; `fetched_at` is
+    shared (portfolio's wins the dict merge — sub-second difference, both mean
+    "this page load")."""
+    return render_template(
+        "portfolio.html",
+        **{**_paper_trading_context(), **_portfolio_context(), **_automated_trading_context()},
+    )
+
+
+@app.route("/paper-trading")
+def paper_trading():
+    """Kept as a redirect so existing links/bookmarks and url_for('paper_trading')
+    (e.g. backtest.html's validation-bar link) still resolve after the
+    2026-07-22 merge into the tabbed /portfolio page."""
+    return redirect(url_for("portfolio") + "#paper")
 
 
 def _group_previews_by_date(previews: list[ForecastPreview]) -> list[dict]:

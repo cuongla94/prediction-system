@@ -49,8 +49,11 @@ scp -r certs root@<droplet-ip>:/opt/kalshi-prediction-market/
 ssh root@<droplet-ip> "chown -R kalshi:kalshi /opt/kalshi-prediction-market"
 ```
 
-The database schema is already applied to the real Supabase instance from
-local testing — no need to re-run `db/schema.sql`.
+Apply the current `db/schema.sql` through the database's normal migration
+process before deploying this version. In particular, verify `live_orders`,
+`live_order_events`, `live_order_fills`, `live_reconciliation_runs`, and
+`live_execution_cycles`, plus `bot_control_events.live_enabled`, exist. Do not
+enable live automation until that verification passes.
 
 ## 5. Start the dashboard and verify
 
@@ -72,12 +75,10 @@ to reach it directly:
 http://<droplet-ip>/
 ```
 
-No TLS yet — this is plain HTTP, chosen deliberately since nothing served
-today is financially sensitive (the paper-trading bot is simulated, no real
-money or credentials involved) and no domain was available to get a real
-cert against. Revisit with a real domain + Let's Encrypt if that changes.
-Credentials aren't stored in this repo; ask whoever set it up (or re-run
-`htpasswd` on the droplet to rotate them).
+Because the dashboard now exposes production automation controls, plain
+internet-facing HTTP is not an acceptable deployment posture. Use the SSH
+tunnel below until a real domain and TLS termination are installed.
+Credentials remain outside this repository.
 
 The SSH tunnel still works too, and bypasses Basic Auth entirely (talks to
 gunicorn directly, not through nginx) — useful for local debugging:

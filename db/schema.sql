@@ -170,6 +170,16 @@ create table if not exists paper_trades (
 
 create index if not exists paper_trades_status_idx on paper_trades (status);
 
+-- Added 2026-07-23 for the strategy-integrity follow-up roadmap. paper_trades'
+-- history mixes different cash-reserve settings, resets, and sizing-logic
+-- changes over time with no way to tell which rows were opened under which
+-- config. Stamped once at open time from paper_trading/engine.py::STRATEGY_VERSION
+-- (a hand-bumped constant, not a git hash — see that module) so later analysis
+-- can filter to "trades under the current locked config" instead of the whole
+-- messy history. Nullable: existing rows predate this tag and can't be
+-- reconstructed after the fact.
+alter table paper_trades add column if not exists strategy_version text;
+
 -- Added 2026-07-19 — the bot lost its entire starting bankroll on its first
 -- batch of real settlements (0 of 57, -$100). Rather than deleting that
 -- history to give it a clean $100 again, a reset just marks a point in time:
@@ -221,3 +231,154 @@ create table if not exists trading_controls (
 );
 
 create index if not exists trading_controls_updated_at_idx on trading_controls (updated_at desc);
+
+-- Added 2026-07-23 for Stage 3's persistent bot-control state
+-- (bot_control/state.py). Same append-only, full-snapshot-per-row pattern
+-- as trading_controls above (not a diff-per-row log): every insert carries
+-- the COMPLETE resulting state, so "current state" is always just the
+-- latest row by created_at, and no separate reconstruction/replay step is
+-- needed to answer "what is the state right now." requested_mode is
+-- recorded even when rejected (effective_mode stays whatever it already
+-- was) so a request for an unimplemented mode is an audit-visible event,
+-- not a silently dropped one. Only 'OFF' and 'PAPER' are implemented
+-- execution modes through the legacy generic endpoint. LIVE is recorded only
+-- by the dedicated production enablement path after all backend gates pass;
+-- generic LIVE requests remain NOT_IMPLEMENTED so they cannot bypass it.
+create table if not exists bot_control_events (
+    id bigint generated always as identity primary key,
+    created_at timestamptz not null default now(),
+    event_type text not null,  -- 'start_requested' | 'start_rejected' | 'stop' | 'run_once' | 'kill' | 'kill_reset' | 'reconcile' | 'refresh_balance'
+    requested_mode text,       -- OFF | PAPER | SHADOW | DEMO | LIVE_CANARY | LIVE
+    effective_mode text not null default 'OFF',
+    enabled boolean not null default false,
+    kill_switch boolean not null default false,
+    kill_switch_reason text,
+    strategy_name text,
+    strategy_version text,
+    actor text,                -- who/what triggered this (session passcode label, 'cron', etc.)
+    reason_code text,          -- e.g. 'OK' | 'NOT_IMPLEMENTED' | 'ALREADY_RUNNING'
+    note text,
+    detail text                -- free-form summary (e.g. reconcile/refresh-balance result)
+);
+
+create index if not exists bot_control_events_created_at_idx on bot_control_events (created_at desc);
+alter table bot_control_events add column if not exists live_enabled boolean not null default false;
+
+-- Added 2026-07-23 for narrowly scoped, bot-owned Kalshi production orders.
+-- Manual Kalshi orders never get a row here and are therefore never eligible
+-- for bot cancellation or bot P&L attribution.
+create table if not exists live_orders (
+    id bigint generated always as identity primary key,
+    local_order_id text not null unique,
+    signal_id text not null,
+    decision_id text not null,
+    strategy_name text not null,
+    strategy_version text not null,
+    market_ticker text not null,
+    event_ticker text not null,
+    event_date date not null,
+    client_order_id text not null unique,
+    kalshi_order_id text unique,
+    intended_outcome text not null check (intended_outcome in ('YES', 'NO')),
+    api_book_side text not null check (api_book_side in ('bid', 'ask')),
+    submitted_yes_price numeric(18, 4) not null,
+    model_probability numeric(18, 8) not null,
+    maximum_acceptable_price numeric(18, 4) not null,
+    requested_count numeric(18, 2) not null,
+    filled_count numeric(18, 2) not null default 0,
+    remaining_count numeric(18, 2) not null default 0,
+    average_fill_price numeric(18, 4),
+    estimated_fees numeric(18, 4) not null default 0,
+    actual_fees numeric(18, 4) not null default 0,
+    status text not null default 'PENDING'
+        check (status in (
+            'PENDING', 'SUBMITTING', 'UNKNOWN', 'RESTING', 'PARTIAL',
+            'FILLED', 'CANCELED', 'REJECTED', 'SETTLED'
+        )),
+    bot_owned boolean not null default true check (bot_owned),
+    decision_at timestamptz not null,
+    quote_at timestamptz not null,
+    weather_data_at timestamptz not null,
+    expires_at timestamptz,
+    created_at timestamptz not null default now(),
+    submitted_at timestamptz,
+    acknowledged_at timestamptz,
+    filled_at timestamptz,
+    canceled_at timestamptz,
+    settled_at timestamptz,
+    settlement_result text,
+    realized_pnl numeric(18, 4),
+    mark_to_market_pnl numeric(18, 4) not null default 0,
+    error_code text,
+    error_detail text,
+    reconciliation_status text not null default 'PENDING',
+    last_reconciled_at timestamptz,
+    unique (
+        strategy_version, decision_id, market_ticker, intended_outcome,
+        api_book_side, submitted_yes_price, requested_count, decision_at
+    )
+);
+
+create index if not exists live_orders_status_idx on live_orders (status, created_at);
+create index if not exists live_orders_event_idx on live_orders (event_ticker, event_date);
+
+create table if not exists live_order_events (
+    id bigint generated always as identity primary key,
+    live_order_id bigint not null references live_orders(id),
+    created_at timestamptz not null default now(),
+    from_status text,
+    to_status text not null,
+    event_type text not null,
+    actor text not null,
+    detail text
+);
+
+create index if not exists live_order_events_order_idx
+    on live_order_events (live_order_id, created_at);
+
+create table if not exists live_order_fills (
+    id bigint generated always as identity primary key,
+    live_order_id bigint not null references live_orders(id),
+    kalshi_fill_id text not null unique,
+    kalshi_order_id text not null,
+    count numeric(18, 2) not null,
+    yes_price numeric(18, 4) not null,
+    fee numeric(18, 4) not null default 0,
+    filled_at timestamptz,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists live_reconciliation_runs (
+    id bigint generated always as identity primary key,
+    started_at timestamptz not null default now(),
+    finished_at timestamptz,
+    healthy boolean not null default false,
+    available_cash numeric(18, 4),
+    local_order_count integer not null default 0,
+    remote_bot_order_count integer not null default 0,
+    fill_count integer not null default 0,
+    position_count integer not null default 0,
+    settlement_count integer not null default 0,
+    mismatch_count integer not null default 0,
+    detail text,
+    actor text not null
+);
+
+create index if not exists live_reconciliation_runs_started_idx
+    on live_reconciliation_runs (started_at desc);
+
+create table if not exists live_execution_cycles (
+    id bigint generated always as identity primary key,
+    started_at timestamptz not null default now(),
+    finished_at timestamptz,
+    status text not null default 'running',
+    submitted_orders integer not null default 0,
+    reconciled_orders integer not null default 0,
+    canceled_orders integer not null default 0,
+    blocker text,
+    error_detail text,
+    summary text
+);
+
+create index if not exists live_execution_cycles_started_idx
+    on live_execution_cycles (started_at desc);

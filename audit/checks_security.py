@@ -431,6 +431,9 @@ def check_decision_log(memory_path: Path) -> Finding:
         "TLS acceptance": "TLS: RISK ACCEPTED",
         "rate-limit decision": "rate limiting: SKIPPED",
         "trading-mechanics pause": "Trading-mechanics work: PAUSED",
+        "automated execution infrastructure approval": "Automated execution infrastructure: APPROVED WITH GATES",
+        "production dashboard security requirement": "Production trading dashboard security: REQUIRED BEFORE LIVE ACTIVATION",
+        "fixed-limit production execution approval": "Production automated execution: APPROVED WITH FIXED LIMITS",
     }
     missing = [name for name, needle in required.items() if needle.lower() not in text.lower()]
     evidence = [f"{memory_path} — {len(text.splitlines())} lines"]

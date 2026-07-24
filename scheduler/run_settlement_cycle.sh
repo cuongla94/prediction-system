@@ -46,6 +46,10 @@ settle_status=$?
 
 "$UV" run --no-sync python scripts/run_paper_trading.py
 
+# Same recurring worker path as run_pipeline.sh. When live is OFF this remains
+# read/reconciliation-only; no production write method is called.
+"$UV" run --no-sync python scripts/run_live_execution.py
+
 if [ "$settle_status" -ne 0 ]; then
   hc_fail "$HC"
 else

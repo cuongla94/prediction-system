@@ -62,7 +62,16 @@
           <span style="font-weight:600;font-size:14px">{{ run.status|capitalize }}{% if stale.get(script) %} · <span class="status-stale">stale (past {{ stale_after.get(script) }})</span>{% endif %}</span>
         </div>
         <p class="stat-sub" style="margin:0">{{ run.summary or '—' }}</p>
-        {% if run.detail %}<p class="stat-card-detail">{{ run.detail }}</p>{% endif %}
+        {# run.detail is raw prose for most scripts, but fit_calibration_params /
+           run_backtest / validate_against_noaa store a machine-readable JSON blob
+           there (rendered as real tables elsewhere) — dumping that verbatim here
+           was unreadable, so show prose detail inline and link the structured ones
+           to the page that already renders them properly. #}
+        {% if run.detail and run.detail[0] not in '[{' %}
+        <p class="stat-card-detail">{{ run.detail }}</p>
+        {% elif run.detail and script in ('fit_calibration_params', 'run_backtest') %}
+        <p class="stat-card-detail"><a href="{{ url_for('backtest') }}">See the full breakdown on Backtest results →</a></p>
+        {% endif %}
         <p class="stat-card-time tnum" style="margin:0">Started {{ run.started_at|pacific }}</p>
         <p class="stat-card-time tnum" style="margin:0;opacity:0.7">Expected every {{ cadence.get(script) }}</p>
         {% endif %}

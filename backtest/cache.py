@@ -31,6 +31,17 @@ from .harness import BacktestRow, collect_rows
 # time-sensitive caching elsewhere).
 _BACKTEST_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 
+# Bump this whenever BacktestRow's fields change. Found live 2026-07-23 while
+# adding per_model_forecast: a cache entry written under the OLD shape
+# deserializes via BacktestRow(**row) with the new field silently defaulted
+# (None) rather than erroring — every city read from a warm cache came back
+# with 0 usable per-model days, not a refetch, until this was traced back to
+# stale cache entries. The version is embedded in the key itself so an old
+# entry is simply never looked up again (a clean miss that refetches with
+# the current shape), rather than needing every existing cache entry
+# manually flushed.
+_CACHE_SCHEMA_VERSION = 2
+
 
 def _redis_client():
     redis_url = os.environ.get("REDIS_URL")
@@ -49,7 +60,7 @@ def _redis_client():
 
 def _cache_key(series_ticker: str, start_date: str, end_date: str, lead_days: int) -> str:
     prefix = os.environ.get("REDIS_KEY_PREFIX", "kalshi-prediction-market")
-    return f"{prefix}:backtest:{series_ticker}:{start_date}:{end_date}:{lead_days}"
+    return f"{prefix}:backtest:v{_CACHE_SCHEMA_VERSION}:{series_ticker}:{start_date}:{end_date}:{lead_days}"
 
 
 def cached_collect_rows(

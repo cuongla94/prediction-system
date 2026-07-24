@@ -1,0 +1,360 @@
+[
+  {
+    "available": true,
+    "date_range": [
+      "2026-07-18T01:16:54.764407+00:00",
+      "2026-07-24T01:45:57.115320+00:00"
+    ],
+    "row_count": 55878,
+    "source": "alerts",
+    "supports_execution_aware_pnl": false,
+    "supports_forecast_skill": true,
+    "supports_market_comparison": true,
+    "unique_events": 280,
+    "unique_markets": 1680
+  },
+  {
+    "available": true,
+    "date_range": [
+      null,
+      null
+    ],
+    "row_count": 0,
+    "source": "forecast_pulls",
+    "supports_execution_aware_pnl": false,
+    "supports_forecast_skill": false,
+    "supports_market_comparison": false,
+    "unique_events": null,
+    "unique_markets": null
+  },
+  {
+    "available": true,
+    "date_range": [
+      null,
+      null
+    ],
+    "row_count": 0,
+    "source": "price_snapshots",
+    "supports_execution_aware_pnl": false,
+    "supports_forecast_skill": false,
+    "supports_market_comparison": false,
+    "unique_events": null,
+    "unique_markets": 0
+  },
+  {
+    "available": true,
+    "date_range": [
+      "2026-07-19T00:26:22.377422+00:00",
+      "2026-07-23T23:01:21.198339+00:00"
+    ],
+    "row_count": 157,
+    "source": "paper_trades",
+    "supports_execution_aware_pnl": false,
+    "supports_forecast_skill": false,
+    "supports_market_comparison": false,
+    "unique_events": 66,
+    "unique_markets": 157
+  },
+  {
+    "available": true,
+    "date_range": [
+      "2026-07-18T18:49:14.767811+00:00",
+      "2026-07-24T01:45:54.758118+00:00"
+    ],
+    "row_count": 1021,
+    "source": "pipeline_runs",
+    "supports_execution_aware_pnl": false,
+    "supports_forecast_skill": false,
+    "supports_market_comparison": false,
+    "unique_events": null,
+    "unique_markets": null
+  },
+  {
+    "available": true,
+    "date_range": [
+      "2026-07-23T22:39:27.531547+00:00",
+      "2026-07-24T00:01:03.952540+00:00"
+    ],
+    "row_count": 8,
+    "source": "bot_control_events",
+    "supports_execution_aware_pnl": false,
+    "supports_forecast_skill": false,
+    "supports_market_comparison": false,
+    "unique_events": null,
+    "unique_markets": null
+  },
+  {
+    "available": false,
+    "notes": "Schema exists in the repository but is not deployed in this database.",
+    "row_count": 0,
+    "source": "live_orders"
+  },
+  {
+    "available": false,
+    "notes": "Schema exists in the repository but is not deployed in this database.",
+    "row_count": 0,
+    "source": "live_order_fills"
+  },
+  {
+    "available": false,
+    "notes": "Schema exists in the repository but is not deployed in this database.",
+    "row_count": 0,
+    "source": "live_reconciliation_runs"
+  },
+  {
+    "city_station_coverage": [
+      {
+        "city": "Atlanta",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 354,
+        "rows": 3174,
+        "settled_rows": 2166
+      },
+      {
+        "city": "Austin",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 354,
+        "rows": 2610,
+        "settled_rows": 2106
+      },
+      {
+        "city": "Boston",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 324,
+        "rows": 3168,
+        "settled_rows": 2160
+      },
+      {
+        "city": "Chicago",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 366,
+        "rows": 2622,
+        "settled_rows": 2118
+      },
+      {
+        "city": "Dallas",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2544,
+        "settled_rows": 2040
+      },
+      {
+        "city": "Denver",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 360,
+        "rows": 2712,
+        "settled_rows": 2208
+      },
+      {
+        "city": "Houston",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2544,
+        "settled_rows": 2040
+      },
+      {
+        "city": "Las Vegas",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2694,
+        "settled_rows": 2190
+      },
+      {
+        "city": "Los Angeles",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2688,
+        "settled_rows": 2184
+      },
+      {
+        "city": "Miami",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 426,
+        "rows": 3246,
+        "settled_rows": 2238
+      },
+      {
+        "city": "Minneapolis",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2544,
+        "settled_rows": 2040
+      },
+      {
+        "city": "New Orleans",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2544,
+        "settled_rows": 2040
+      },
+      {
+        "city": "NYC",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 408,
+        "rows": 3252,
+        "settled_rows": 2244
+      },
+      {
+        "city": "Oklahoma City",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2544,
+        "settled_rows": 2040
+      },
+      {
+        "city": "Philadelphia",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 420,
+        "rows": 3252,
+        "settled_rows": 2244
+      },
+      {
+        "city": "Phoenix",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2640,
+        "settled_rows": 2136
+      },
+      {
+        "city": "San Antonio",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 294,
+        "rows": 2550,
+        "settled_rows": 2046
+      },
+      {
+        "city": "San Francisco",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2688,
+        "settled_rows": 2184
+      },
+      {
+        "city": "Seattle",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 288,
+        "rows": 2688,
+        "settled_rows": 2184
+      },
+      {
+        "city": "Washington DC",
+        "events": 14,
+        "markets": 84,
+        "missing_ensemble_rows": 0,
+        "missing_observation_rows": 354,
+        "rows": 3174,
+        "settled_rows": 2166
+      }
+    ],
+    "exact_duplicate_decision_keys": 0,
+    "model_coverage": [
+      {
+        "model_version": "normal-v4-observation-conditioned",
+        "rows": 52494,
+        "settled_rows": 39390
+      },
+      {
+        "model_version": "normal-v3-seasonal-bias",
+        "rows": 3312,
+        "settled_rows": 3312
+      },
+      {
+        "model_version": "normal-v2-bias-corrected",
+        "rows": 72,
+        "settled_rows": 72
+      }
+    ],
+    "notes": "market_yes_price is a captured midpoint. No synchronized bid/ask/depth rows exist, so execution-aware P&L is unsupported.",
+    "source": "alerts_coverage",
+    "stale_data": "Historical settled data only; freshness is irrelevant for retrospective skill. Live decisions enforce a separate 30-minute gate."
+  },
+  {
+    "available": true,
+    "notes": "A value captured with the alert is available, but source observation publication/revision timestamps are not persisted.",
+    "row_count": 49338,
+    "source": "metar_observations",
+    "storage_layer": "alerts.observed_so_far"
+  },
+  {
+    "available": true,
+    "notes": "Kalshi settlement plus the stored daily extreme are the outcome labels.",
+    "row_count": 42774,
+    "source": "settlement_outcomes",
+    "storage_layer": "alerts.actual_outcome/settled_at/actual_high_temp"
+  },
+  {
+    "available": false,
+    "notes": "No historical bot fills are available. Account settlements cannot be joined point-in-time to a strategy decision and are not treated as a backtest.",
+    "row_count": 0,
+    "source": "historical_real_trades",
+    "storage_layer": "live_orders/live_order_fills"
+  },
+  {
+    "available": true,
+    "model_coverage": [
+      {
+        "model_version": "normal-v4-observation-conditioned",
+        "rows": 52494,
+        "settled_rows": 39390
+      },
+      {
+        "model_version": "normal-v3-seasonal-bias",
+        "rows": 3312,
+        "settled_rows": 3312
+      },
+      {
+        "model_version": "normal-v2-bias-corrected",
+        "rows": 72,
+        "settled_rows": 72
+      }
+    ],
+    "row_count": 3,
+    "source": "strategy_versions",
+    "storage_layer": "alerts.model_version and strategy_version_registry.json"
+  },
+  {
+    "available": true,
+    "notes": "Prior aggregate diagnostics were inventoried for context. Candidate selection in this run is recomputed from canonical event-date partitions.",
+    "row_count": null,
+    "source": "prior_backtests_walk_forwards_ablations",
+    "storage_layer": "pipeline_runs and repository backtest/validation artifacts"
+  }
+]

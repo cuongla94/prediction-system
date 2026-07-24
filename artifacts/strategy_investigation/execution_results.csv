@@ -1,0 +1,24 @@
+strategy_version,execution_basis,gross_pnl,fees,net_pnl,profit_factor,expectancy,maximum_drawdown,reason
+research-current-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-hard-lower-bound-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-raw-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-residual-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-logistic-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-isotonic-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-market-prior-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-conservative-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-impossible-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-late-day-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-low-disagreement-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-blend-0.00-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-blend-0.10-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-blend-0.20-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-blend-0.30-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-blend-0.50-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-blend-0.75-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-blend-1.00-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-gfs-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-ecmwf-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-icon-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-cross-bracket-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.
+research-remaining-hour-simulation-v1,FORECAST_SKILL_ONLY,,,,,,,No point-in-time executable bid/ask/depth data.

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strategy Integrity Audit — Kalshi Weather Signals</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+
+  <main class="container page-body">
+    <div class="page-head">
+      <h1>Strategy integrity audit</h1>
+      <a class="back-link" href="{{ url_for('portfolio') }}">← Back to Portfolio</a>
+    </div>
+    <p class="page-subtitle" style="max-width:760px">Latest run of scripts/run_strategy_integrity_audit.py — read-only checks for a YES/NO inversion, bracket-boundary defects, duplicate paper trades, future-observation leakage, timezone/DST defects, and strategy-version freshness.</p>
+
+    {% if report_text %}
+    <div class="table-wrap">
+      <pre style="white-space:pre-wrap;font-family:var(--font-mono, monospace);font-size:13px;line-height:1.5;padding:20px;background:var(--color-surface, #fff);border:1px solid var(--color-border, #ddd);border-radius:8px">{{ report_text }}</pre>
+    </div>
+    {% else %}
+    <div class="banner banner-warning">No audit report found at <code>{{ report_path }}</code> yet — run <code>uv run scripts/run_strategy_integrity_audit.py</code> to generate one.</div>
+    {% endif %}
+  </main>
+
+  {% include "_footer.html" %}
+</body>
+</html>

@@ -1,0 +1,369 @@
+{# Paper Trading Bot tab body — the "Portfolio" page's first tab. Was its own
+   full page (paper_trading.html) until 2026-07-22, when /paper-trading and
+   /portfolio were merged into one tabbed "Portfolio" page. Rendered inside
+   portfolio.html's shared <main>, so it carries no <html>/<nav>/<main> of its
+   own and no page-head (the shell owns those). The modal + countdown scripts
+   that drive this markup live in portfolio.html, so they load once for both
+   tabs. Context comes from dashboard/app.py's _paper_trading_context(). #}
+<p class="page-meta tnum" style="margin-bottom:4px">Last updated {{ fetched_at|pacific('%b %-d, %H:%M:%S %Z') }} — Unrealized P&amp;L is priced against live Kalshi quotes on every load, and this page also refreshes itself every 30s so this timestamp (and everything below it) keeps moving instead of freezing at whenever you first loaded it.</p>
+{% if latest_reset %}
+<p class="page-meta tnum">Bankroll reset {{ latest_reset|pacific }} — figures below reflect trades since then; full history is still below.</p>
+{% endif %}
+<p class="page-meta tnum">Strategy version <code>{{ strategy_version }}</code> — {{ trades_on_current_version }} of {{ trades_total }} trades in history were opened under this config.</p>
+
+{% if db_error %}
+<div class="banner banner-warning">Can't reach the database right now: {{ db_error }}</div>
+{% else %}
+
+{% set bs = bot_status %}
+<div data-bot-scope="paper" class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 18px;margin-bottom:20px">
+  <span class="tnum">
+    Bot: <strong class="{{ 'pnl-positive' if bs.enabled else '' }}">{{ 'ENABLED' if bs.enabled else 'DISABLED' }}</strong>
+    ({{ bs.effective_mode }}){% if bs.kill_switch %} · <strong class="pnl-negative">KILL SWITCH ACTIVE</strong>{% endif %}
+    — capital eligibility, balance, and the kill switch are on the
+    <a href="{{ url_for('portfolio') }}#kalshi">Your Kalshi portfolio</a> tab.
+  </span>
+  <span style="display:flex;gap:8px;flex-wrap:wrap">
+    {% if bs.enabled %}
+    <button type="button" class="btn btn-secondary" style="padding:6px 14px;font-size:13px" data-bot-action="stop">Stop Bot</button>
+    {% else %}
+    <button type="button" class="btn btn-primary" style="padding:6px 14px;font-size:13px" data-bot-action="start" data-bot-mode="PAPER">Start Paper Bot</button>
+    {% endif %}
+    <button type="button" class="btn btn-secondary" style="padding:6px 14px;font-size:13px" data-bot-action="run-once">Run One Cycle</button>
+  </span>
+  <div class="bot-control-message banner banner-warning" style="display:none;width:100%;margin:8px 0 0"></div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card {{ 'stat-card--gain' if portfolio_value >= starting_bankroll else 'stat-card--loss' }}">
+    <div class="stat-label">Portfolio value</div>
+    <div class="stat-value tnum">${{ "%.2f"|format(portfolio_value) }}</div>
+  </div>
+  <div class="stat-card stat-card--flat">
+    <div class="stat-label">Cash available</div>
+    <div class="stat-value tnum">${{ "%.2f"|format(cash_available) }}</div>
+    <div class="stat-sub tnum">${{ "%.2f"|format(cash_reserve_held) }} held in reserve ({{ "%.0f"|format(cash_reserve_fraction * 100) }}%) · ${{ "%.2f"|format(cash_deployable) }} deployable now</div>
+  </div>
+  <div class="stat-card {{ 'stat-card--flat' if unrealized_pnl_total is none else ('stat-card--gain' if unrealized_pnl_total >= 0 else 'stat-card--loss') }}">
+    <div class="stat-label">Unrealized P&amp;L</div>
+    <div class="stat-value tnum">{{ "%+.2f"|format(unrealized_pnl_total) if unrealized_pnl_total is not none else '—' }}</div>
+  </div>
+  <div class="stat-card {{ 'stat-card--gain' if realized_pnl_total >= 0 else 'stat-card--loss' }}">
+    <div class="stat-label">Realized P&amp;L</div>
+    <div class="stat-value tnum">{{ "%+.2f"|format(realized_pnl_total) }}</div>
+  </div>
+  <div class="stat-card stat-card--flat">
+    <div class="stat-label">Model-implied EV
+      <span class="help" tabindex="0">?<span class="tooltip">What the model itself predicted these same settled trades would earn, from its own stated probabilities at entry — compare this against Realized P&amp;L directly to the left. The two tracking together over time is what actually validates the model; a single trade's win or loss doesn't. Renamed from "Expected P&amp;L" 2026-07-23 — this number comes from an unvalidated probability model (see the validation bar below) and must not be read as expected profit.</span></span>
+    </div>
+    <div class="stat-value tnum">{{ "%+.2f"|format(predicted_ev_total) }}</div>
+    <div class="stat-sub" style="color:var(--color-loss)">Unvalidated model output — not expected profit.</div>
+  </div>
+  <div class="stat-card stat-card--flat">
+    <div class="stat-label">Win rate
+      <span class="help" tabindex="0">?<span class="tooltip">Not a reliable measure on its own — a contract bought at 90¢ needs to win far more often than one bought at 40¢ just to break even, so win rate depends on what price range the bot happens to trade in, not on skill. Expected vs. Realized P&amp;L (above) is the more honest comparison.</span></span>
+    </div>
+    <div class="stat-value tnum">{{ "%.0f%%"|format(win_rate * 100) if win_rate is not none else '—' }}</div>
+  </div>
+</div>
+
+{% set ts = trade_performance %}
+<div class="section-head" style="margin-top:8px">
+  <h4>Trade performance <span style="font-weight:400;font-size:13px;color:var(--color-neutral-500)">— {{ ts.n }} settled trade{{ 's' if ts.n != 1 else '' }} since reset</span></h4>
+  <span class="section-head-rule"></span>
+</div>
+<div class="stat-grid" style="margin-bottom:28px">
+  <div class="stat-card {{ 'stat-card--flat' if ts.profit_factor is none else ('stat-card--gain' if ts.profit_factor > 1 else 'stat-card--loss') }}">
+    <div class="stat-label">Profit factor
+      <span class="help" tabindex="0">?<span class="tooltip">Gross winning dollars divided by gross losing dollars. Above 1.0 means the wins outweigh the losses; below 1.0 means the losses are bigger. Shows "—" when there are no losing trades yet (the ratio is undefined, not infinite).</span></span>
+    </div>
+    <div class="stat-value tnum">{{ "%.2f"|format(ts.profit_factor) if ts.profit_factor is not none else '—' }}</div>
+  </div>
+  <div class="stat-card {{ 'stat-card--flat' if ts.expectancy is none else ('stat-card--gain' if ts.expectancy >= 0 else 'stat-card--loss') }}">
+    <div class="stat-label">Expectancy
+      <span class="help" tabindex="0">?<span class="tooltip">Average realized P&amp;L per settled trade (net P&amp;L ÷ number of trades) — what one more trade like these, on average, actually made or lost.</span></span>
+    </div>
+    <div class="stat-value tnum">{{ "%+.2f"|format(ts.expectancy) if ts.expectancy is not none else '—' }}</div>
+  </div>
+  <div class="stat-card {{ 'stat-card--loss' if ts.max_drawdown > 0 else 'stat-card--flat' }}">
+    <div class="stat-label">Max drawdown
+      <span class="help" tabindex="0">?<span class="tooltip">The largest peak-to-trough decline in cumulative realized P&amp;L over this run — the deepest hole the strategy dug itself into before recovering (or not), regardless of where it stands right now.</span></span>
+    </div>
+    <div class="stat-value tnum">${{ "%.2f"|format(ts.max_drawdown) }}</div>
+  </div>
+  <div class="stat-card {{ 'stat-card--flat' if ts.current_streak == 0 else ('stat-card--gain' if ts.current_streak > 0 else 'stat-card--loss') }}">
+    <div class="stat-label">Current streak
+      <span class="help" tabindex="0">?<span class="tooltip">Consecutive wins or losses ending with the most recent settled trade. Longest streaks this run: {{ ts.longest_win_streak }} wins, {{ ts.longest_loss_streak }} losses.</span></span>
+    </div>
+    <div class="stat-value tnum">{{ (ts.current_streak|abs|string) + ('W' if ts.current_streak > 0 else 'L') if ts.current_streak != 0 else '—' }}</div>
+  </div>
+</div>
+
+<section class="validation-card" aria-labelledby="validation-heading">
+  {% set vs = validation_summary %}
+  <h2 id="validation-heading">Validation:
+    <span class="validation-verdict-failed">{{ vs.status if vs else 'UNAVAILABLE' }}</span>
+    {% if vs %}<span class="page-meta" style="font-weight:400">as of {{ vs.status_as_of }} &mdash; {{ vs.strategy_name }} {{ vs.strategy_version }}</span>{% endif %}
+  </h2>
+
+  {% if not vs %}
+  <div class="banner banner-warning">Validation data is unavailable right now — could not reach the database. This is an honest "unavailable" state, not a fabricated pass.</div>
+  {% else %}
+  <p class="validation-conclusion">{{ vs.conclusion }}</p>
+
+  <div class="validation-cohorts">
+    <div>
+      <div class="validation-cohort-label">High-edge cohort (|edge| &gt; 10%)</div>
+      <div class="validation-cohort-value tnum">
+        {{ vs.high_edge_wins }} wins / {{ vs.high_edge_losses }} losses =
+        {{ "%.2f%%"|format(vs.high_edge_win_rate * 100) if vs.high_edge_win_rate is not none else '—' }}
+      </div>
+      <div class="validation-cohort-sub tnum">{{ vs.high_edge_settled_total }} settled markets{% if vs.settled_market_count is not none %} of {{ vs.settled_market_count }} total ({{ vs.unique_event_count }} events, {{ vs.city_count }} cities){% endif %}</div>
+    </div>
+    <div>
+      <div class="validation-cohort-label">Closed paper trades</div>
+      <div class="validation-cohort-value tnum">
+        {{ vs.paper_wins }} wins / {{ vs.paper_losses }} losses =
+        {{ "%.0f%%"|format(vs.paper_win_rate * 100) if vs.paper_win_rate is not none else '—' }}
+      </div>
+      <div class="validation-cohort-sub tnum">{{ vs.paper_settled_total }} settled trades</div>
+    </div>
+    {% if vs.model_brier is not none %}
+    <div>
+      <div class="validation-cohort-label">Model Brier vs. market Brier</div>
+      <div class="validation-cohort-value tnum">{{ "%.4f"|format(vs.model_brier) }} vs {{ "%.4f"|format(vs.market_brier) }}</div>
+      <div class="validation-cohort-sub">lower is better; market is more accurate</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="stat-grid" style="margin-bottom:10px">
+    <div class="stat-card {{ 'stat-card--flat' if vs.profit_factor is none else ('stat-card--gain' if vs.profit_factor > 1 else 'stat-card--loss') }}">
+      <div class="stat-label">Profit factor</div>
+      <div class="stat-value tnum">{{ "%.2f"|format(vs.profit_factor) if vs.profit_factor is not none else '—' }}</div>
+    </div>
+    <div class="stat-card {{ 'stat-card--flat' if vs.expectancy is none else ('stat-card--gain' if vs.expectancy >= 0 else 'stat-card--loss') }}">
+      <div class="stat-label">Expectancy</div>
+      <div class="stat-value tnum">{{ "%+.2f"|format(vs.expectancy) if vs.expectancy is not none else '—' }} / trade</div>
+    </div>
+    <div class="stat-card {{ 'stat-card--loss' if vs.max_drawdown > 0 else 'stat-card--flat' }}">
+      <div class="stat-label">Maximum drawdown</div>
+      <div class="stat-value tnum">${{ "%.2f"|format(vs.max_drawdown) }}</div>
+    </div>
+    <div class="stat-card stat-card--flat">
+      <div class="stat-label">Streaks (longest)</div>
+      <div class="stat-value tnum">{{ vs.winning_streak }}W / {{ vs.losing_streak }}L</div>
+    </div>
+    <div class="stat-card stat-card--flat">
+      <div class="stat-label">Model-implied EV vs. realized</div>
+      <div class="stat-value tnum">{{ "%+.2f"|format(vs.model_implied_ev) }} vs {{ "%+.2f"|format(vs.realized_pnl) }}</div>
+      <div class="stat-sub">gap {{ "%+.2f"|format(vs.ev_vs_realized_gap) }}</div>
+    </div>
+  </div>
+
+  <div class="validation-status-lines">
+    <span>Strategy validation: <strong class="validation-verdict-failed">{{ vs.status }}</strong></span>
+    <span>Execution infrastructure: <strong>{{ bot_status.mode_readiness.PAPER if bot_status else 'UNKNOWN' }} (PAPER only)</strong></span>
+    <span>Production security: <strong>{{ bot_status.production_security_status if bot_status else 'UNKNOWN' }}</strong></span>
+    <span>Capital eligibility: <strong>{{ 'ELIGIBLE' if bot_status and bot_status.capital_eligibility.eligible else 'BLOCKED' }}</strong></span>
+    <span>Production activation: <strong>{{ bot_status.production_activation_status if bot_status else 'UNKNOWN' }}</strong></span>
+  </div>
+
+  <p class="section-note" style="margin:0 0 4px">{{ vs.root_cause_summary }}</p>
+  <p class="section-note" style="margin:0">Unrestricted LIVE trading is blocked. Execution testing may continue through Paper — Shadow, Demo, and a separately gated Live Canary mode were declined for this codebase; see DECISIONS.md's "Automated execution infrastructure" decision.</p>
+
+  <details class="validation-rationale">
+    <summary>
+      <span class="validation-rationale-show">View full rationale</span>
+      <span class="validation-rationale-hide">Hide full rationale</span>
+    </summary>
+    <div class="validation-rationale-body">
+      <div class="banner banner-warning" style="margin: 0 0 16px">
+        <strong>This strategy has no edge. Do not put real capital behind it.</strong>
+        Measured against live settlements on 462 distinct settled markets (77 events, 20 cities):
+        the model&rsquo;s Brier score is <strong>0.1224</strong> against the market&rsquo;s
+        <strong>0.0048</strong> &mdash; the market is ~25&times; more accurate, and beats the model in
+        19 of 20 cities. Across the 171 markets where the model claimed more than 10 points of edge,
+        <strong>0 resolved in its favour</strong>. The &ldquo;edge&rdquo; was measuring the model&rsquo;s
+        own staleness, not mispricing: bracket probabilities ignored the temperature already recorded
+        that day, while the market could see it.
+        <br /><br />
+        The criteria below were never reached &mdash; they are a sample-size bar, and this is a
+        structural failure that more samples cannot fix. Tightening the edge threshold makes it
+        <em>worse</em>, because a larger claimed edge selects for a larger model error. Per the
+        pre-committed rule below: back to the forecasting core, not more automation and not real money.
+        The root cause is fixed in <code>weather/probability.py</code>
+        (<code>observation_conditioned_bracket_probability</code>, live as
+        <code>normal-v4-observation-conditioned</code>); this bar stays FAILED until
+        <code>scripts/run_backtest.py</code> reports <strong>TRADEABLE</strong> &mdash; i.e. the model
+        actually beats the market out-of-sample &mdash; and a fresh batch of paper trades then clears
+        the sample-size criteria below on top of that.
+      </div>
+      <p class="section-note">
+        Set 2026-07-19, before knowing how this goes — the whole point of writing it down now is to
+        judge results against a bar fixed in advance, not against whichever number looks good this
+        week. Prompted by an external review of this whole approach; full context in this project's
+        memory. Progress numbers below are live; the thresholds themselves are a reasonable starting
+        judgment call, not a rigorous power analysis — revisit them once there's real data to revisit
+        them with.
+      </p>
+      <ul class="validation-criteria">
+        <li>
+          <strong>Sample size:</strong> {{ closed_since_reset|length }} of a 100-trade minimum before
+          drawing <em>any</em> conclusion; 300+ settled trades <em>and</em> 60+ calendar days
+          (currently {{ days_since_reset if days_since_reset is not none else 0 }}) before a real
+          go/no-go call — both conditions, not either. A burst of correlated trades on one bad night
+          isn't "enough data," as the very first batch already showed.
+        </li>
+        <li>
+          <strong>Calibration:</strong> once a predicted-probability bucket has ~20+ settled trades,
+          its real hit rate should land within roughly 10-15 percentage points of what was predicted.
+          A persistent miss in a well-populated bucket — not noise in a small one — means pause and
+          re-fit, not push forward hoping it resolves itself.
+        </li>
+        <li>
+          <strong>EV tracking:</strong> Expected P&amp;L and Realized P&amp;L (above) should move
+          together over time. A single bad correlated night isn't the signal to react to; a sustained,
+          widening gap over multiple weeks is.
+        </li>
+        <li>
+          <strong>Not a pass/fail metric on its own:</strong> win rate — see its tooltip above for why.
+        </li>
+      </ul>
+      <p class="section-note" style="margin-bottom:0">
+        If the bar is met: small real capital, with circuit breakers (daily/consecutive-loss caps —
+        not yet built) live from day one, not before. If it's missed: back to the forecasting core,
+        not more automation and not real money "to see what happens."
+      </p>
+    </div>
+  </details>
+
+  <p class="validation-links">
+    <a href="{{ url_for('strategy_integrity_audit') }}">View integrity audit &rarr;</a>
+    <a href="{{ url_for('backtest') }}">View backtest results &rarr;</a>
+  </p>
+  {% endif %}
+</section>
+
+<div class="section-head">
+  <h4>Open positions ({{ open_city_groups|map(attribute='rows')|map('length')|sum }})</h4>
+  <span class="section-head-rule"></span>
+</div>
+{% if not open_city_groups %}
+<p class="empty">No open positions right now.</p>
+{% else %}
+<div style="margin-bottom:40px">
+{% for group in open_city_groups %}
+{# data-live-key: a STABLE identity for this row across live refreshes.
+   _live_refresh.html re-opens whichever groups were expanded, and it
+   cannot key off the summary text — that contains the countdown (rewritten
+   every second by the ticker) and a live P&L figure, so the on-screen text
+   never matches the freshly-fetched server text and every group would
+   silently collapse on each refresh. City is stable and unique per row. #}
+<details class="ladder-toggle ladder-toggle--standalone" data-live-key="open-{{ group.city }}">
+  <summary class="summary-with-link">
+    <span>
+      <span class="chevron">▸</span>
+      {{ group.city }} · {{ group.rows|length }} position(s) ·
+      {% if group.earliest_close_time %}
+      <span class="countdown tnum" data-close-time="{{ group.earliest_close_time.isoformat() }}">closes {{ group.earliest_close_time|pacific('%b %-d, %H:%M %Z') }}</span> ·
+      {% endif %}
+      <span class="tnum">${{ "%.2f"|format(group.cost_basis_total) }} at cost</span>
+      {% if group.unrealized_pnl_total is not none %}
+      · <span class="tnum {{ 'pnl-positive' if group.unrealized_pnl_total >= 0 else 'pnl-negative' }}">{{ "%+.2f"|format(group.unrealized_pnl_total) }}</span>
+      {% endif %}
+    </span>
+    {% if group.kalshi_url %}
+    <a class="status-link" href="{{ group.kalshi_url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">Trade on Kalshi ↗</a>
+    {% endif %}
+  </summary>
+  <div class="table-wrap">
+    <table class="table" style="min-width:760px">
+      <thead>
+        <tr><th>Opened</th><th>Closes</th><th>Bracket</th><th>Side</th><th style="text-align:right">Entry price</th><th style="text-align:right">Contracts</th><th style="text-align:right">Cost basis</th><th style="text-align:right">Value now</th><th style="text-align:right">Unrealized P&amp;L</th></tr>
+      </thead>
+      <tbody>
+        {% for row in group.rows %}
+        {% set t = row.trade %}
+        <tr>
+          <td class="tnum">{{ t.opened_at|pacific('%b %-d, %H:%M %Z') }}</td>
+          <td class="tnum">
+            {% if t.close_time %}
+            <span class="countdown" data-close-time="{{ t.close_time.isoformat() }}">closes {{ t.close_time|pacific('%b %-d, %H:%M %Z') }}</span>
+            {% else %}
+            —
+            {% endif %}
+          </td>
+          <td class="tnum" style="font-weight:600">{{ t.bracket_label }}</td>
+          <td><span class="side-badge side-{{ t.side|lower }}">{{ t.side }}</span></td>
+          <td class="tnum" style="text-align:right">{{ "%.1f¢"|format(t.entry_price * 100) }}</td>
+          <td class="tnum" style="text-align:right">{{ t.contracts }}</td>
+          <td class="tnum" style="text-align:right">${{ "%.2f"|format(t.cost_basis) }}</td>
+          <td class="tnum" style="text-align:right">${{ "%.2f"|format(row.current_value) }}</td>
+          <td class="tnum {{ 'pnl-positive' if row.unrealized_pnl is not none and row.unrealized_pnl >= 0 else 'pnl-negative' if row.unrealized_pnl is not none else '' }}" style="text-align:right">
+            {{ "%+.2f"|format(row.unrealized_pnl) if row.unrealized_pnl is not none else 'no live quote' }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% endfor %}
+</div>
+{% endif %}
+
+<div class="section-head">
+  <h4>Trade history ({{ closed_date_groups|map(attribute='trades')|map('length')|sum }})</h4>
+  <span class="section-head-rule"></span>
+</div>
+{% if not closed_date_groups %}
+<p class="empty">No trades have closed yet.</p>
+{% else %}
+<div class="card" style="overflow:hidden">
+{% for group in closed_date_groups %}
+<button type="button" class="ladder-toggle-btn"
+        onclick="document.body.style.overflow='hidden'; document.getElementById('trade-date-{{ group.date_key }}').showModal()">
+  <span class="chevron">▸</span>
+  <span class="ladder-toggle-label tnum">{{ group.date_label }} · {{ group.trades|length }} closed</span>
+  <span class="tnum {{ 'pnl-positive' if group.realized_pnl_total >= 0 else 'pnl-negative' }}" style="margin-left:auto;font-size:15px">{{ "%+.2f"|format(group.realized_pnl_total) }}</span>
+</button>
+
+<dialog id="trade-date-{{ group.date_key }}" class="details-modal trade-history-modal">
+  <form method="dialog" class="modal-close-form">
+    <button type="submit" class="modal-close" aria-label="Close">×</button>
+  </form>
+  <p class="modal-question">Trades for {{ group.date_label }}</p>
+  <div class="table-wrap">
+    <table class="table" style="min-width:640px">
+      <thead>
+        <tr><th>Closed</th><th>City</th><th>Bracket</th><th>Side</th><th style="text-align:right">Entry</th><th style="text-align:right">Exit</th><th>Reason</th><th style="text-align:right">P&amp;L</th></tr>
+      </thead>
+      <tbody>
+        {% for t in group.trades %}
+        <tr>
+          <td class="tnum">{{ t.closed_at|pacific('%b %-d, %H:%M %Z') }}</td>
+          <td style="font-weight:600">{{ t.city }}</td>
+          <td class="tnum">{{ t.bracket_label }}</td>
+          <td><span class="side-badge side-{{ t.side|lower }}">{{ t.side }}</span></td>
+          <td class="tnum" style="text-align:right">{{ "%.1f¢"|format(t.entry_price * 100) }}</td>
+          <td class="tnum" style="text-align:right">{{ "%.1f¢"|format(t.exit_price * 100) if t.exit_price is not none else '—' }}</td>
+          <td>
+            <span class="status-badge status-{{ 'success' if t.close_reason == 'settled_win' else 'failed' if t.close_reason == 'settled_loss' else 'partial' }}">
+              {{ (t.close_reason or 'unknown')|replace('_', ' ') }}
+            </span>
+          </td>
+          <td class="tnum {{ 'pnl-positive' if (t.realized_pnl or 0) >= 0 else 'pnl-negative' }}" style="text-align:right">
+            {{ "%+.2f"|format(t.realized_pnl) if t.realized_pnl is not none else '—' }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</dialog>
+{% endfor %}
+</div>
+{% endif %}
+
+{% endif %}

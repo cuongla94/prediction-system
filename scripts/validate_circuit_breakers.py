@@ -13,6 +13,22 @@ Examples:
 
     # Test a tighter 2% daily limit
     uv run scripts/validate_circuit_breakers.py --daily-fraction 0.02 --max-consecutive 5
+
+REWRITTEN 2026-07-23 for the Stage 3 circuit-breaker audit. The original
+version of this script evaluated the consecutive-loss breaker only ONCE per
+calendar day, at day rollover, using whatever streak state existed at that
+exact moment. That silently MISSES a real activation: a losing streak that
+crosses the threshold mid-day and is later broken by a win before that same
+day's last trade never got evaluated at all, because the only check was at
+day's end. Confirmed live against the current 121-trade paper history: the
+old method found 1 trip for the 5%/3 config; the corrected per-trade
+evaluation below (risk/circuit_breaker_report.py, which checks after EVERY
+closed trade, not just at day boundaries) finds 4 real activations for the
+same config on the same data — 3 of which the old method silently dropped.
+This is very likely the actual root cause of DECISIONS.md's previously
+reported non-monotonic trip counts (loose > moderate) — not a monotonicity
+bug in the underlying breach predicates themselves, which
+tests/test_circuit_breakers.py's TestMonotonicity class now proves directly.
 """
 
 from __future__ import annotations
@@ -24,12 +40,8 @@ from typing import Optional
 import psycopg
 from dotenv import load_dotenv
 
-from risk.circuit_breakers import (
-    DEFAULT_DAILY_LOSS_FRACTION,
-    DEFAULT_MAX_CONSECUTIVE_LOSSES,
-    Trade,
-    circuit_breaker_verdict,
-)
+from risk.circuit_breaker_report import IdentifiedTrade, build_activation_report, summarize_activations
+from risk.circuit_breakers import DEFAULT_DAILY_LOSS_FRACTION, DEFAULT_MAX_CONSECUTIVE_LOSSES
 
 load_dotenv()
 
@@ -100,125 +112,72 @@ def main():
     print(f"Loaded {len(trades_data)} closed trades")
     print()
 
-    # Convert to Trade objects, sorted by date
-    trades = [
-        Trade(
+    # $100 starting bankroll — this project's own paper_trading.STARTING_BANKROLL_USD
+    # (not imported directly to avoid a circular/heavier dependency here; kept
+    # as a literal with this note so the two don't silently drift unnoticed).
+    starting_bankroll = 100.0
+
+    identified_trades = [
+        IdentifiedTrade(
+            id=row["id"],
+            market_ticker=row["market_ticker"],
             closed_at=row["closed_at"],
             realized_pnl=row["realized_pnl"],
             status=row["status"],
         )
         for row in trades_data
     ]
+    config_name = f"{args.daily_fraction:.0%} daily / {args.max_consecutive} consecutive"
+    activations = build_activation_report(
+        identified_trades, config_name, args.daily_fraction, args.max_consecutive, starting_bankroll=starting_bankroll
+    )
+    counts = summarize_activations(activations)
 
-    # Compute starting bankroll from first trade's cost basis
-    # (rough estimate: assume starting with $100)
-    bankroll = 100.0
-    trip_events = []
-
-    print("Simulating trading day-by-day:")
-    print("-" * 100)
-
-    current_date = None
-    today_trades = []
-
-    for i, trade in enumerate(trades):
-        trade_date = trade.closed_at.date() if trade.closed_at else None
-
-        # Date rollover: check breakers and reset daily trades
-        if trade_date != current_date:
-            if today_trades and current_date is not None:
-                # Check breakers at end of day
-                breached, reason = circuit_breaker_verdict(
-                    today_trades,
-                    trades[:i],
-                    bankroll,
-                    args.daily_fraction,
-                    args.max_consecutive,
-                )
-                if breached:
-                    daily_pnl = sum(t.realized_pnl for t in today_trades)
-                    trip_events.append(
-                        {
-                            "date": current_date,
-                            "trade_count": len(today_trades),
-                            "daily_pnl": daily_pnl,
-                            "bankroll": bankroll,
-                            "reason": reason,
-                            "trade_index": i - 1,
-                        }
-                    )
-                    print(
-                        f"  {current_date}: BREACHED after {len(today_trades)} trade(s), "
-                        f"P&L=${daily_pnl:.2f}, bankroll=${bankroll:.2f}"
-                    )
-                    print(f"    Reason: {reason}")
-
-            current_date = trade_date
-            today_trades = []
-
-        # Update bankroll cumulatively
-        bankroll += trade.realized_pnl
-        today_trades.append(trade)
-
-    # Final day
-    if today_trades and current_date is not None:
-        breached, reason = circuit_breaker_verdict(
-            today_trades,
-            trades,
-            bankroll,
-            args.daily_fraction,
-            args.max_consecutive,
-        )
-        if breached:
-            daily_pnl = sum(t.realized_pnl for t in today_trades)
-            trip_events.append(
-                {
-                    "date": current_date,
-                    "trade_count": len(today_trades),
-                    "daily_pnl": daily_pnl,
-                    "bankroll": bankroll,
-                    "reason": reason,
-                    "trade_index": len(trades) - 1,
-                }
-            )
-            print(
-                f"  {current_date}: BREACHED after {len(today_trades)} trade(s), "
-                f"P&L=${daily_pnl:.2f}, bankroll=${bankroll:.2f}"
-            )
-            print(f"    Reason: {reason}")
-
-    print()
     print("=" * 100)
-    print("SUMMARY")
+    print("PER-ACTIVATION REPORT (one row per real breaker trip)")
     print("=" * 100)
-    print(f"Total trips: {len(trip_events)}")
-    print(f"Final bankroll: ${bankroll:.2f}")
-    print()
-
-    if trip_events:
-        print("Trip events (in order):")
-        for i, event in enumerate(trip_events, 1):
-            print(
-                f"  {i}. {event['date']}: {event['reason']} "
-                f"(${event['daily_pnl']:.2f} / {event['trade_count']} trades)"
-            )
+    if not activations:
+        print("No activations with these thresholds.")
     else:
-        print("No circuit-breaker trips with these thresholds.")
-
+        header = (
+            f"{'Type':<17} {'Date':<12} {'Trade':<8} {'Bankroll before':>16} "
+            f"{'Daily loss':>12} {'Streak':>7} {'Reason code':<24} Blocks new trades"
+        )
+        print(header)
+        print("-" * len(header))
+        for a in activations:
+            trade_label = f"#{a.activating_trade_id}" if a.activating_trade_id is not None else "(day pool)"
+            daily_loss_label = f"${a.daily_loss_at_activation:.2f}" if a.daily_loss_at_activation is not None else "—"
+            streak_label = (
+                str(a.consecutive_losses_at_activation) if a.consecutive_losses_at_activation is not None else "—"
+            )
+            print(
+                f"{a.activation_type:<17} {a.activation_date:<12} {trade_label:<8} "
+                f"${a.bankroll_before:>14.2f} {daily_loss_label:>12} {streak_label:>7} "
+                f"{a.reason_code:<24} {'yes' if a.blocks_new_trades else 'no'}"
+            )
     print()
+    print(
+        f"Unique affected days: {counts['unique_affected_days']}  |  "
+        f"Daily-loss activations: {counts['daily_loss_activations']}  |  "
+        f"Consecutive-loss activations: {counts['consecutive_loss_activations']}  |  "
+        f"Unique trading halts: {counts['unique_trading_halts']}"
+    )
+    print()
+
+    halts = counts["unique_trading_halts"]
     print("Threshold recommendations:")
-    if len(trip_events) == 0:
-        print("  • These thresholds are very permissive (no trips on 82 trades)")
+    if halts == 0:
+        print(f"  • These thresholds are very permissive (no halts on {len(identified_trades)} trades)")
         print("  • Consider tightening them (lower daily%, fewer consecutive losses)")
-    elif len(trip_events) < 3:
-        print("  • Very few trips; thresholds may be too loose")
+    elif halts < 3:
+        print("  • Very few halts; thresholds may be too loose")
         print("  • Consider a 1-2% tighter daily limit or lower max_consecutive")
-    elif len(trip_events) > 10:
-        print("  • Many trips; thresholds may be too tight")
+    elif halts > 10:
+        print("  • Many halts; thresholds may be too tight")
         print("  • Consider a 1-2% looser daily limit or higher max_consecutive")
     else:
         print("  • Thresholds appear reasonable; monitor results")
-
     print()
 
 

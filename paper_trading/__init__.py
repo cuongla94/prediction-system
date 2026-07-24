@@ -1,5 +1,6 @@
 from .engine import (
     STARTING_BANKROLL_USD,
+    STRATEGY_VERSION,
     ExitDecision,
     NewPosition,
     OpenAlert,
@@ -23,6 +24,7 @@ from .engine import (
 
 __all__ = [
     "STARTING_BANKROLL_USD",
+    "STRATEGY_VERSION",
     "ExitDecision",
     "NewPosition",
     "OpenAlert",

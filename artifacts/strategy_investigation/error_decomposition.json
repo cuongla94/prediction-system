@@ -1,0 +1,41 @@
+{
+  "bracket_tail_behavior": {
+    "bounded_brier": 0.13969620834060595,
+    "bounded_rows": 160,
+    "tail_brier": 0.05601074035136307,
+    "tail_rows": 80
+  },
+  "correlation_across_brackets": "240 bracket rows represent only 40 independent event/date outcomes.",
+  "fee_spread_slippage_impact": "NOT ESTIMABLE: no synchronized executable bid/ask, depth, or fill evidence.",
+  "forecast_center_error": {
+    "cohort": "all",
+    "dimension": "all",
+    "mae": 1.5986081932772593,
+    "mean_error": -0.16494222689074767,
+    "median_error": 0.1365546218487026,
+    "q10": -2.932436974789863,
+    "q25": -0.76260504201678,
+    "q75": 1.1850840336134532,
+    "q90": 2.1326890756301946,
+    "rmse": 2.172611176366019,
+    "sample_size": 32,
+    "skew": -0.8024780028189198,
+    "standard_deviation": 2.2010046704137944
+  },
+  "forecast_market_timestamp_mismatch": "Forecast run/availability and observation publication timestamps were not persisted. Only the combined alert decision capture time is authoritative.",
+  "forecast_variance_error": {
+    "ensemble_spread_vs_absolute_error_correlation": 0.14381304293238414,
+    "interpretation": "Weak/unstable correlation means stored spread is not a dependable uncertainty proxy."
+  },
+  "market_brier": 0.10885958333333333,
+  "observation_conditioning_error": {
+    "impossible_rows": 0,
+    "mean_probability_assigned_to_impossible_yes": null
+  },
+  "probability_calibration_error": {
+    "calibration_gap": 0.040149698986619346,
+    "current_brier": 0.11180105234419165
+  },
+  "quote_staleness": "Alert midpoint was captured at decision time, but no independent quote timestamp or bid/ask was persisted.",
+  "unfilled_order_impact": "NOT ESTIMABLE: no historical live bot orders."
+}

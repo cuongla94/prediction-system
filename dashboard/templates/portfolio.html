@@ -3,94 +3,258 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Your Kalshi Portfolio — Kalshi Weather Signals</title>
+  <title>Portfolio — Kalshi Weather Signals</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    /* Tabbed Portfolio page (paper-trading bot + real Kalshi account), merged
+       2026-07-22 from two separate pages. Scoped here rather than in style.css
+       since nothing else uses tabs yet. */
+    .tab-bar { display:flex; gap:2px; border-bottom:1px solid var(--color-neutral-300, #d8d2c4); margin:0 0 26px; }
+    .tab-btn {
+      appearance:none; background:none; border:none; border-bottom:2px solid transparent;
+      padding:10px 20px; margin-bottom:-1px; font-family:var(--font-heading); font-weight:600;
+      font-size:15px; color:var(--color-neutral-500, #8a8272); cursor:pointer; letter-spacing:0.2px;
+    }
+    .tab-btn:hover { color:var(--color-text, #2b2b2b); }
+    .tab-btn.is-active { color:var(--color-text, #2b2b2b); border-bottom-color:var(--color-accent, #9a7b2e); }
+    .tab-panel { display:none; }
+    .tab-panel.is-active { display:block; }
+  </style>
 </head>
-<body>
+<body data-csrf-token="{{ csrf_token() }}">
   {% include "_nav.html" %}
 
   <main class="container page-body">
     <div class="page-head">
-      <h1>Your Kalshi portfolio</h1>
+      <h1>Portfolio</h1>
       <a class="back-link" href="{{ url_for('index') }}">← Back to dashboard</a>
     </div>
-    <p class="page-subtitle">Real positions on your actual Kalshi account, read-only — not this project's paper-trading simulation, and not limited to weather markets. Nothing here is ever placed, changed, or cancelled by this system.</p>
-    <p class="page-meta tnum">Last updated {{ fetched_at|pacific('%b %-d, %H:%M:%S %Z') }} — fetched live from Kalshi on every load, and this page also refreshes itself every 30s so this timestamp (and everything below it) keeps moving.</p>
 
-    {% if error %}
-    <div class="banner banner-warning">{{ error }}</div>
-    {% else %}
-
-    <div class="stat-grid">
-      <div class="stat-card stat-card--flat">
-        <div class="stat-label">Cost</div>
-        <div class="stat-value tnum">${{ "%.2f"|format(total_cost) }}</div>
-      </div>
-      <div class="stat-card stat-card--flat">
-        <div class="stat-label">Market value</div>
-        <div class="stat-value tnum">{{ "$%.2f"|format(total_market_value) if total_market_value is not none else '—' }}</div>
-      </div>
-      <div class="stat-card {{ 'stat-card--flat' if total_market_value is none else ('stat-card--gain' if total_market_value >= total_cost else 'stat-card--loss') }}">
-        <div class="stat-label">Total return</div>
-        <div class="stat-value tnum">{{ "%+.2f"|format(total_market_value - total_cost) if total_market_value is not none else '—' }}</div>
-      </div>
-      <div class="stat-card {{ 'stat-card--gain' if total_realized_pnl >= 0 else 'stat-card--loss' }}">
-        <div class="stat-label">Realized P&amp;L</div>
-        <div class="stat-value tnum">{{ "%+.2f"|format(total_realized_pnl) }}</div>
-      </div>
+    <div class="tab-bar" role="tablist" aria-label="Portfolio views">
+      <button type="button" class="tab-btn is-active" data-tab="paper" role="tab" aria-selected="true">Paper trading bot</button>
+      <button type="button" class="tab-btn" data-tab="kalshi" role="tab" aria-selected="false">Your Kalshi portfolio</button>
     </div>
 
-    <div class="section-head">
-      <h4>Positions ({{ rows|length }})</h4>
-      <span class="section-head-rule"></span>
+    <div class="tab-panel is-active" id="tab-paper" role="tabpanel">
+      {% include "_paper_trading_panel.html" %}
     </div>
-    {% if not rows %}
-    <p class="empty">No open positions on your Kalshi account right now.</p>
-    {% else %}
-    <div class="table-wrap">
-      <table class="table">
-        <thead>
-          <tr><th>Market</th><th>Side</th><th style="text-align:right">Contracts</th><th style="text-align:right">Cost</th><th style="text-align:right">Market value</th><th style="text-align:right">Total return</th><th style="text-align:right">Fees paid</th><th style="text-align:right">Updated</th><th></th></tr>
-        </thead>
-        <tbody>
-          {% for row in rows %}
-          <tr>
-            <td>
-              {% if row.title %}
-              <div style="font-weight:600">{{ row.title }}</div>{% if row.outcome_label %}<div class="ticker-id" style="margin:0">{{ row.outcome_label }}</div>{% endif %}
-              {% else %}
-              {{ row.ticker }}
-              {% endif %}
-            </td>
-            <td><span class="side-badge side-{{ row.side|lower }}">{{ row.side|upper }}</span></td>
-            <td class="tnum" style="text-align:right">{{ "%.2f"|format(row.contracts) }}</td>
-            <td class="tnum" style="text-align:right">${{ "%.2f"|format(row.cost_dollars) }}</td>
-            <td class="tnum" style="text-align:right">{{ "$%.2f"|format(row.market_value_dollars) if row.market_value_dollars is not none else '—' }}</td>
-            <td class="tnum {{ 'pnl-positive' if row.total_return_dollars is not none and row.total_return_dollars >= 0 else 'pnl-negative' if row.total_return_dollars is not none else '' }}" style="text-align:right">
-              {% if row.total_return_dollars is not none %}
-              {{ "%+.2f"|format(row.total_return_dollars) }}{% if row.total_return_pct is not none %} ({{ "%+.0f%%"|format(row.total_return_pct * 100) }}){% endif %}
-              {% else %}
-              no live quote
-              {% endif %}
-            </td>
-            <td class="tnum" style="text-align:right">${{ "%.2f"|format(row.fees_paid_dollars) }}</td>
-            <td class="tnum" style="text-align:right;color:var(--color-neutral-500)">{{ row.last_updated_ts|pacific('%b %-d, %H:%M %Z') if row.last_updated_ts else '—' }}</td>
-            <td>
-              {% if row.kalshi_url %}
-              <a class="status-link" href="{{ row.kalshi_url }}" target="_blank" rel="noopener noreferrer">Trade on Kalshi ↗</a>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <div class="tab-panel" id="tab-kalshi" role="tabpanel">
+      {% include "_portfolio_panel.html" %}
     </div>
-    {% endif %}
-
-    {% endif %}
   </main>
 
   {% include "_footer.html" %}
+
+  <script>
+    // Modal + countdown behaviour for the paper-trading tab's trade-history
+    // dialogs and open-position timers. Unchanged from when this was its own
+    // page — see the block comments below. Re-runnable because
+    // _live_refresh.html swaps <main> and re-fires `live-refresh`.
+    function bindDetailsModals() {
+      document.querySelectorAll('dialog.details-modal').forEach(function (dialog) {
+        dialog.addEventListener('click', function (event) {
+          if (event.target === dialog) dialog.close();
+        });
+        dialog.addEventListener('close', function () {
+          document.body.style.overflow = '';
+        });
+      });
+    }
+    bindDetailsModals();
+    document.addEventListener('live-refresh', bindDetailsModals);
+
+    // Bot-control buttons (Start/Stop/Run One Cycle in _paper_trading_panel.html,
+    // Refresh Balance/Reconcile/Emergency Stop in _portfolio_panel.html) — kept
+    // out here, not in those partials' own markup, for the same reason
+    // bindDetailsModals is: those partials live inside <main>, which
+    // _live_refresh.html replaces via innerHTML every 30s, and a <script>
+    // tag inserted that way never executes. Re-binding on every call (not
+    // just once) is what makes this survive repeated swaps; querying fresh
+    // elements each time means stale references from a prior DOM never leak.
+    function bindBotControls() {
+      // Not scoped to one panel — Start/Stop/Run One Cycle live in the Paper
+      // trading tab, Refresh Balance/Reconcile/Emergency Stop live in the
+      // Kalshi portfolio tab (see _paper_trading_panel.html and
+      // _portfolio_panel.html). Each button finds its own nearest message
+      // element so a failure shows next to the control that caused it.
+      var csrfToken = document.body.dataset.csrfToken;
+
+      function callBotApi(path, body) {
+        return fetch('/api/trading-bot/' + path, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken
+          },
+          body: JSON.stringify(body || {})
+        }).then(function (resp) {
+          return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+        });
+      }
+
+      var liveToggle = document.querySelector('[data-live-toggle]');
+      var liveDialog = document.querySelector('[data-live-confirmation]');
+      if (liveToggle) {
+        liveToggle.onchange = function () {
+          if (liveToggle.checked) {
+            liveToggle.disabled = true;
+            callBotApi('live/preflight', {}).then(function (result) {
+              liveToggle.disabled = false;
+              if (result.ok && liveDialog) {
+                var cash = liveDialog.querySelector('[data-live-confirm-cash]');
+                if (cash && result.data.available_cash != null) {
+                  cash.textContent = result.data.available_cash;
+                }
+                liveDialog.showModal();
+              } else {
+                liveToggle.checked = false;
+                var msg = document.querySelector('[data-bot-scope="kalshi"] .bot-control-message');
+                if (msg) {
+                  msg.textContent = (result.data && result.data.error) || 'Live preflight failed';
+                  msg.style.display = 'block';
+                }
+              }
+            });
+          } else {
+            liveToggle.disabled = true;
+            callBotApi('live/disable', {}).then(function (result) {
+              if (result.ok) window.location.reload();
+              else {
+                liveToggle.disabled = false;
+                liveToggle.checked = true;
+              }
+            });
+          }
+        };
+      }
+      if (liveDialog) {
+        liveDialog.querySelectorAll('[data-live-confirm-cancel]').forEach(function (button) {
+          button.onclick = function () {
+            liveDialog.close();
+            if (liveToggle) liveToggle.checked = false;
+          };
+        });
+        var confirmButton = liveDialog.querySelector('[data-live-confirm-submit]');
+        var confirmInput = liveDialog.querySelector('[data-live-confirm-input]');
+        if (confirmButton && confirmInput) {
+          confirmButton.onclick = function () {
+            confirmButton.disabled = true;
+            callBotApi('live/enable', { confirmation: confirmInput.value }).then(function (result) {
+              confirmButton.disabled = false;
+              if (result.ok) {
+                window.location.reload();
+              } else {
+                var msg = document.querySelector('[data-bot-scope="kalshi"] .bot-control-message');
+                if (msg) {
+                  msg.textContent = (result.data && result.data.error) || 'Live enablement failed';
+                  msg.style.display = 'block';
+                }
+                liveDialog.close();
+                if (liveToggle) liveToggle.checked = false;
+              }
+            });
+          };
+        }
+      }
+
+      document.querySelectorAll('[data-bot-action]').forEach(function (btn) {
+        btn.onclick = function () {
+          var action = btn.dataset.botAction;
+          var msg = btn.closest('[data-bot-scope]');
+          msg = msg ? msg.querySelector('.bot-control-message') : null;
+          var body = {};
+          if (action === 'start') body.mode = btn.dataset.botMode;
+          if (action === 'kill') body.reason = 'manual emergency stop from the dashboard';
+          btn.disabled = true;
+          callBotApi(action, body).then(function (result) {
+            btn.disabled = false;
+            if (!result.ok) {
+              if (msg) {
+                msg.textContent = (result.data && result.data.error) || (action + ' failed');
+                msg.style.display = 'block';
+              }
+              return;
+            }
+            window.location.reload();
+          }).catch(function (err) {
+            btn.disabled = false;
+            if (msg) {
+              msg.textContent = 'Request failed: ' + err;
+              msg.style.display = 'block';
+            }
+          });
+        };
+      });
+    }
+    bindBotControls();
+    document.addEventListener('live-refresh', bindBotControls);
+
+    (function () {
+      // Live countdown, re-queried each tick because _live_refresh.html
+      // replaces <main> every 30s (a cached NodeList would freeze on stale
+      // times after the first refresh).
+      function formatRemaining(ms) {
+        if (ms <= 0) return 'Trading closed';
+        var totalSeconds = Math.floor(ms / 1000);
+        var days = Math.floor(totalSeconds / 86400);
+        var hours = Math.floor((totalSeconds % 86400) / 3600);
+        var minutes = Math.floor((totalSeconds % 3600) / 60);
+        var seconds = totalSeconds % 60;
+        if (days > 0) return 'Closes in ' + days + 'd ' + hours + 'h';
+        if (hours > 0) return 'Closes in ' + hours + 'h ' + minutes + 'm';
+        return 'Closes in ' + minutes + 'm ' + seconds + 's';
+      }
+      function tick() {
+        var now = Date.now();
+        document.querySelectorAll('.countdown[data-close-time]').forEach(function (el) {
+          var remaining = new Date(el.dataset.closeTime).getTime() - now;
+          el.textContent = formatRemaining(remaining);
+          el.classList.toggle('urgent', remaining > 0 && remaining < 3600000);
+          el.classList.toggle('closed', remaining <= 0);
+        });
+      }
+      tick();
+      setInterval(tick, 1000);
+    })();
+
+    (function () {
+      // Tab switching. The two tabs are both server-rendered on every load
+      // (so live-refresh keeps both fresh); this only toggles which one is
+      // visible. `active` lives in this closure — the <script> is outside
+      // <main>, so it survives _live_refresh.html's innerHTML swap, and the
+      // `live-refresh` handler re-applies the user's tab synchronously before
+      // paint (the swap otherwise resets both panels to the server default,
+      // which is the paper tab). The chosen tab is mirrored to location.hash
+      // so a link like /portfolio#kalshi opens straight to that view.
+      var VALID = { paper: 1, kalshi: 1 };
+      var active = 'paper';
+      function fromHash() {
+        var h = (location.hash || '').replace('#', '');
+        return VALID[h] ? h : 'paper';
+      }
+      function apply(tab) {
+        active = tab;
+        document.querySelectorAll('.tab-btn').forEach(function (b) {
+          var on = b.dataset.tab === tab;
+          b.classList.toggle('is-active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        document.querySelectorAll('.tab-panel').forEach(function (p) {
+          p.classList.toggle('is-active', p.id === 'tab-' + tab);
+        });
+      }
+      function bind() {
+        document.querySelectorAll('.tab-btn').forEach(function (b) {
+          b.onclick = function () { active = b.dataset.tab; location.hash = active; apply(active); };
+        });
+        apply(active);
+      }
+      active = fromHash();
+      bind();
+      document.addEventListener('live-refresh', bind);
+      window.addEventListener('hashchange', function () { apply(fromHash()); });
+    })();
+  </script>
 
   {% include "_live_refresh.html" %}
 </body>
