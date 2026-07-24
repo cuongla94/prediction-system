@@ -68,6 +68,10 @@ themselves — no need to `export` these into your shell manually.
 - `strategy_research/` and `artifacts/strategy_investigation/` — canonical
   point-in-time investigation, no-lookahead checks, candidate registry,
   chronological folds, final holdout, and reproducible evidence.
+- `trading_readiness/` and `artifacts/trading_readiness/` — corrected metric
+  populations, city/date-clustered uncertainty, explicit readiness gates,
+  immutable confirmatory candidates, append-only orderbook evidence, and
+  conservative prospective paper execution.
 - `dashboard/` — Flask app showing alert cards (rules text, kid-readable stat
   tooltips, a calibration-status banner). Reads the latest alert per market
   from Postgres; falls back to a real-but-frozen demo snapshot if `DATABASE_URL`
@@ -88,6 +92,10 @@ uv run scripts/generate_alerts.py          # full pipeline, all 6 cities; writes
 uv run scripts/mark_settled_alerts.py      # checks pending alerts against Kalshi, writes back settled_at/actual_outcome
 uv run scripts/run_backtest.py             # backtests the probability engine against real settled markets
 uv run scripts/run_strategy_investigation.py # read-only research run; never promotes a strategy
+uv run scripts/run_trading_readiness_report.py # read-only readiness audit/artifacts
+uv run scripts/run_professional_trader_report.py # read-only professional journal status/freeze
+uv run scripts/run_forward_evidence_collector.py --mode once # append prospective paper decisions
+uv run scripts/run_forward_evidence_collector.py --mode stream # persistent orderbook/trade/fill evidence
 uv run scripts/run_live_execution.py       # one reconciled cycle; submits only when explicitly enabled
 uv run python -m dashboard.app             # dashboard dev server (also registered in .claude/launch.json)
 ```
@@ -109,6 +117,66 @@ The recurring execution cycle is called by the existing scheduler scripts; do
 not install a second scheduler. Apply the current `db/schema.sql` before
 enabling so the live audit tables exist. Emergency stop cancels only bot-owned
 orders and never touches manual account orders.
+
+## Real-trading readiness evidence
+
+The strategy remains `FAILED` and is not ready for real-money automation. The
+readiness investigation froze exactly two research candidates:
+
+- `forward-blend-model-0.50-market-0.50-v1`
+- `forward-blend-model-0.25-market-0.75-v1`
+
+`model_weight` and `market_weight` are literal coefficients and sum to one.
+The older `market_blend_weight` was the market coefficient; the implementation
+was correct but its label was ambiguous.
+
+Before collecting forward evidence:
+
+1. Apply the current `db/schema.sql`.
+2. Run `scripts/run_trading_readiness_report.py` to create the immutable freeze
+   manifest.
+3. Set `FORWARD_EVIDENCE_ENABLED=1`. The production deployment uses the
+   tracked `deploy/forward-evidence.env` switch so the setting is auditable and
+   shared by the existing systemd price feed and cron pipeline.
+4. Restart the existing `kalshi-price-feed` service and leave the existing
+   pipeline schedule installed.
+
+The existing price-feed service then uses Kalshi's authenticated V2 WebSocket
+for orderbook snapshots/deltas, ticker, trades, lifecycle, and fills. REST full
+books are authoritative after initial connection, reconnect, sequence gaps, and
+process restart. The existing pipeline appends prospective candidate decisions.
+Neither path calls create/cancel order.
+
+The provisional reconsideration gate is at least 60 forward calendar days, 100
+independent city/date events, and 100 settled eligible paper trades, with
+positive fee-aware expectancy, profit factor above one, approved drawdown,
+stable city/date results, no unresolved integrity violations, and explicit
+human review. There is no automatic promotion.
+
+## Professional climate-trader decisions
+
+The existing forward collector also drives one focused
+`SEE → HEAR → THINK → ACT → REVIEW` pipeline. It does not replace the
+forecasting model. It records explicit contract truth, point-in-time weather,
+executable orderbook prices, real account/risk state, material information
+events, immutable decisions, written theses/counterarguments/invalidation,
+and post-settlement process reviews.
+
+The only decision states are `DO_NOT_TRADE`, `WATCH`, `BUY_YES`, `BUY_NO`,
+`HOLD`, `EXIT`, `REBUY_YES`, and `REBUY_NO`. A lower price by itself cannot
+cause a re-entry. Research decisions remain prospective-paper-only and cannot
+be promoted automatically.
+
+The alert-details modal reuses the existing market surface for a compact
+Professional trader view. The Kalshi Portfolio tab adds only current bot
+action, open-position thesis, last decision, and next review. Full evidence
+stays in `artifacts/professional_trader/`.
+
+Before collection, apply `db/schema.sql`, run both read-only report commands
+to create/verify the two immutable manifests, and then enable the existing
+forward collector. Live execution additionally requires a persisted
+professional checklist with explicit production permission; the frozen
+research cohort cannot produce that permission.
 
 ## Scheduler
 

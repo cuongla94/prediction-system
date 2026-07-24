@@ -38,6 +38,26 @@ def _signal_rows():
         "close_time": NOW + timedelta(hours=4),
         "weather_data_at": NOW,
         "lead_days": 0,
+        "professional_decision_id": "professional-decision-1",
+        "professional_strategy_version": "v1-2026-07-23",
+        "professional_action": "BUY_YES",
+        "production_order_allowed": True,
+        "professional_checklist": {
+            "CONTRACT": {
+                "settlement_truth_complete": True,
+                "station_correct": True,
+                "bracket_boundaries_clear": True,
+                "market_open": True,
+            },
+            "INFORMATION": {"point_in_time_valid": True},
+            "PROBABILITY": {
+                "probabilities_valid": True,
+                "impossible_outcomes_zeroed": True,
+            },
+            "PRICE": {"executable_and_within_limit": True},
+            "THESIS": {"specific_information_advantage": True},
+            "RISK": {"risk_checks_pass": True},
+        },
     }
     return [
         {
@@ -283,6 +303,24 @@ def test_five_dollars_and_one_cent_passes_capital_and_submits_one_limit_order():
     assert client.create_calls[0]["time_in_force"] == "good_till_canceled"
     assert repository.orders[0].status == "RESTING"
     assert client.balance_calls == 1
+
+
+def test_persisted_professional_checklist_is_required_before_submission():
+    client = FakeClient()
+    repository = FakeRepository()
+    rows = _signal_rows()
+    rows[0]["production_order_allowed"] = False
+    repository.list_signal_rows = lambda: rows
+    service = LiveExecutionService(
+        client=client, repository=repository, now=lambda: NOW
+    )
+    assert (
+        service.submit_one(
+            state=_state(), reconciliation=_reconciliation("10.00")
+        )
+        is False
+    )
+    assert client.create_calls == []
 
 
 def test_stale_reconciliation_cash_cannot_bypass_immediate_balance_recheck():

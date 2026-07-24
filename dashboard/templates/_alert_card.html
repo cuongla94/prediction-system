@@ -6,6 +6,7 @@
 {% endmacro %}
 
 {% set sizing = event.sizing[alert.market_ticker] %}
+{% set professional = professional_views.get(alert.market_ticker, {}) %}
 
 <tr id="row-{{ alert.market_ticker | replace('.', '-') }}"
     class="ladder-row {{ 'actionable' if alert.is_actionable else 'muted' }} side-{{ alert.side|lower }}"
@@ -29,7 +30,7 @@
       Details
     </button>
 
-    <dialog id="details-{{ alert.id }}" class="details-modal">
+    <dialog id="details-{{ alert.id }}" class="details-modal professional-modal">
       <form method="dialog" class="modal-close-form">
         <button type="submit" class="modal-close" aria-label="Close">×</button>
       </form>
@@ -40,6 +41,44 @@
         <span class="side-badge">{{ alert.side }}</span>
       </div>
       <p class="ticker-id">{{ alert.market_ticker }}</p>
+
+      <section class="professional-view">
+        <div class="professional-view__header">
+          <div>
+            <span class="professional-view__eyebrow">Professional trader view</span>
+            <strong class="professional-view__action">{{ professional.get('action', 'DO_NOT_TRADE') }}</strong>
+          </div>
+          {% if professional.get('prospective_paper_only', true) %}
+          <span class="tag tag-outline">Paper evidence only</span>
+          {% endif %}
+        </div>
+        {% if not professional %}
+        <p class="professional-view__empty">No point-in-time professional snapshot has been collected for this market. Contract truth and execution evidence remain unverified, so the safe action is DO_NOT_TRADE.</p>
+        {% else %}
+        <dl class="professional-view__grid">
+          <div><dt>Contract truth</dt><dd>{{ professional.contract_status }}</dd></div>
+          <div><dt>Latest material information</dt><dd>{{ professional.latest_information }}</dd></div>
+          <div><dt>Weather now</dt><dd>{{ professional.weather_summary }}</dd></div>
+          <div><dt>Fair / executable</dt><dd class="tnum">{{ professional.fair_probability or '—' }} / {{ professional.executable_probability or '—' }}</dd></div>
+          <div><dt>Net edge after costs</dt><dd class="tnum">{{ professional.net_edge if professional.net_edge is not none else '—' }}</dd></div>
+          <div><dt>Confidence</dt><dd>{{ professional.confidence }}</dd></div>
+          <div><dt>Maximum price</dt><dd class="tnum">{{ professional.maximum_price if professional.maximum_price is not none else '—' }}</dd></div>
+          <div><dt>Current position</dt><dd>{{ professional.position }}</dd></div>
+        </dl>
+        <p><strong>Thesis:</strong> {{ professional.thesis }}</p>
+        <p><strong>Strongest counterargument:</strong> {{ professional.counterargument }}</p>
+        <p><strong>Invalidation:</strong> {{ professional.invalidation }}</p>
+        <p><strong>Next event:</strong> {{ professional.expected_next_event }}</p>
+        <p><strong>Next review:</strong> {{ professional.next_review }}</p>
+        <p><strong>Blockers:</strong> {{ professional.blockers|join(', ') if professional.blockers else 'none' }}</p>
+        <details><summary>Why this decision?</summary><p>{{ professional.why_decision }}</p></details>
+        <details><summary>What would change the decision?</summary><p>{{ professional.what_would_change }}</p></details>
+        <details><summary>Market and weather timeline</summary><p>{{ professional.timeline }}</p></details>
+        <details><summary>Position history</summary><p>{{ professional.position_history }}</p></details>
+        <details><summary>Post-trade review</summary><p>{{ professional.post_trade_review }}</p></details>
+        <p class="ticker-id">Decision {{ professional.decision_id }} · {{ professional.candidate_version }}</p>
+        {% endif %}
+      </section>
 
       <dl class="stats">
         {{ stat("Model", "%.1f%%"|format(alert.model_probability * 100), "Our best guess at how likely this is to happen, based on weather forecasts. If it says 70%, that means: imagine this exact day happened 10 times — we think it'd come true about 7 of those times.") }}

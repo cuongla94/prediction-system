@@ -275,6 +275,41 @@ class LiveExecutionService:
             probability = Decimal(str(row["model_probability"]))
             edge = Decimal(str(row["edge"]))
             intended = "YES" if edge > 0 else "NO"
+            required_action = f"BUY_{intended}"
+            checklist = row.get("professional_checklist") or {}
+            required_checks = (
+                checklist.get("CONTRACT", {}).get(
+                    "settlement_truth_complete"
+                ),
+                checklist.get("CONTRACT", {}).get("station_correct"),
+                checklist.get("CONTRACT", {}).get(
+                    "bracket_boundaries_clear"
+                ),
+                checklist.get("CONTRACT", {}).get("market_open"),
+                checklist.get("INFORMATION", {}).get("point_in_time_valid"),
+                checklist.get("PROBABILITY", {}).get(
+                    "probabilities_valid"
+                ),
+                checklist.get("PROBABILITY", {}).get(
+                    "impossible_outcomes_zeroed"
+                ),
+                checklist.get("PRICE", {}).get(
+                    "executable_and_within_limit"
+                ),
+                checklist.get("THESIS", {}).get(
+                    "specific_information_advantage"
+                ),
+                checklist.get("RISK", {}).get("risk_checks_pass"),
+            )
+            if (
+                not row.get("production_order_allowed")
+                or row.get("professional_action") != required_action
+                or row.get("professional_strategy_version")
+                != strategy_version
+                or not row.get("professional_decision_id")
+                or not all(value is True for value in required_checks)
+            ):
+                continue
             outcome_probability = probability if intended == "YES" else Decimal("1") - probability
             threshold = Decimal(str(row["fee_adjusted_threshold"]))
             maximum_price = outcome_probability - threshold
@@ -285,8 +320,10 @@ class LiveExecutionService:
                 continue
             signals.append(
                 LiveSignal(
-                    signal_id=f"alert:{row['id']}",
-                    decision_id=f"alert:{row['id']}",
+                    signal_id=(
+                        f"professional:{row['professional_decision_id']}"
+                    ),
+                    decision_id=row["professional_decision_id"],
                     strategy_name=strategy_name,
                     strategy_version=strategy_version,
                     market_ticker=row["market_ticker"],

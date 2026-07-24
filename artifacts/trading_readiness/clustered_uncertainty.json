@@ -1,0 +1,222 @@
+{
+  "bootstrap_samples": 20000,
+  "bracket_outcome_count": 234,
+  "brackets_treated_as_independent": false,
+  "confidence_interval_90": [
+    0.009058009405794591,
+    0.018115748194686875
+  ],
+  "confidence_interval_95": [
+    0.008206436186787298,
+    0.018965445719036297
+  ],
+  "independent_cluster_count": 39,
+  "interpretation": "Negative differences favor the candidate; an interval spanning zero does not distinguish the candidate from market noise.",
+  "mean_brier_difference": 0.013574928962993508,
+  "median_brier_difference": 0.012181255403469784,
+  "probability_candidate_beats_market": 0.0,
+  "resampling_unit": "event_ticker (one city/date event)",
+  "seed": 20260724,
+  "stability_analyses": {
+    "all_sensitivity_results_favor_candidate": false,
+    "chronological_folds": [
+      {
+        "analysis": "chronological_fold",
+        "candidate_beats_market": true,
+        "independent_cluster_count": 40,
+        "mean_brier_difference": -0.0037149139449335657,
+        "training_through": "2026-07-20",
+        "validation_date": "2026-07-21"
+      },
+      {
+        "analysis": "chronological_fold",
+        "candidate_beats_market": true,
+        "independent_cluster_count": 40,
+        "mean_brier_difference": -0.0004820686466856513,
+        "training_through": "2026-07-21",
+        "validation_date": "2026-07-22"
+      },
+      {
+        "analysis": "chronological_fold",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 39,
+        "mean_brier_difference": 0.01357492896299351,
+        "training_through": "2026-07-22",
+        "validation_date": "2026-07-23"
+      }
+    ],
+    "leave_one_city_out": [
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.0046041982803144265,
+        "omitted_group": "Atlanta"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 152,
+        "mean_brier_difference": 0.0039612209557301084,
+        "omitted_group": "Austin"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004620504412744575,
+        "omitted_group": "Boston"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004967696769477226,
+        "omitted_group": "Chicago"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004690174058732545,
+        "omitted_group": "Dallas"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004735188762878583,
+        "omitted_group": "Denver"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004767235729351374,
+        "omitted_group": "Houston"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004609073845010628,
+        "omitted_group": "Las Vegas"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004781079788199958,
+        "omitted_group": "Los Angeles"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004666956297569243,
+        "omitted_group": "Miami"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004461276266511672,
+        "omitted_group": "Minneapolis"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004298625091060982,
+        "omitted_group": "NYC"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.005510849148174603,
+        "omitted_group": "New Orleans"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.0038545371992517573,
+        "omitted_group": "Oklahoma City"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004772754335106059,
+        "omitted_group": "Philadelphia"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004270593699691236,
+        "omitted_group": "Phoenix"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004537715469786815,
+        "omitted_group": "San Antonio"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.005614252334631878,
+        "omitted_group": "San Francisco"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.004930803682901902,
+        "omitted_group": "Seattle"
+      },
+      {
+        "analysis": "leave_one_city_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 151,
+        "mean_brier_difference": 0.005153705519102184,
+        "omitted_group": "Washington DC"
+      }
+    ],
+    "leave_one_date_out": [
+      {
+        "analysis": "leave_one_date_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 119,
+        "mean_brier_difference": 0.00303817584783175,
+        "omitted_group": "2026-07-20"
+      },
+      {
+        "analysis": "leave_one_date_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 119,
+        "mean_brier_difference": 0.0075154226040184124,
+        "omitted_group": "2026-07-21"
+      },
+      {
+        "analysis": "leave_one_date_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 119,
+        "mean_brier_difference": 0.006428751915531719,
+        "omitted_group": "2026-07-22"
+      },
+      {
+        "analysis": "leave_one_date_out",
+        "candidate_beats_market": false,
+        "independent_cluster_count": 120,
+        "mean_brier_difference": 0.00180263752103418,
+        "omitted_group": "2026-07-23"
+      }
+    ]
+  },
+  "status": "COMPLETE"
+}

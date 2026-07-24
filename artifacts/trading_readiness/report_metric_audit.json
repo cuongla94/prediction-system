@@ -1,0 +1,17 @@
+{
+  "blend_implementation_reversed": false,
+  "blend_label_was_ambiguous": true,
+  "candidate_count": 23,
+  "confirmed_weight_semantics": "final_probability = model_weight * weather_model_probability + market_weight * market_probability",
+  "corrected_inconsistencies": [
+    "Generic Events column mixed probability rows and independent city/date clusters.",
+    "Wins/losses were directional eligible-signal outcomes, not executed trades.",
+    "Execution metrics are now zero/null until prospective paper orders exist.",
+    "Brier population equality is explicitly audited for every candidate."
+  ],
+  "directional_denominator_rule": "directional_signal_wins + directional_signal_losses + directional_signal_voids = eligible_signals",
+  "execution_denominator_rule": "wins + losses + voids = settled_trades",
+  "old_market_blend_weight_meaning": "market_weight",
+  "population_violations": {},
+  "status": "CORRECTED"
+}

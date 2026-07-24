@@ -3,9 +3,9 @@
     "available": true,
     "date_range": [
       "2026-07-18T01:16:54.764407+00:00",
-      "2026-07-24T01:45:57.115320+00:00"
+      "2026-07-24T03:00:56.190170+00:00"
     ],
-    "row_count": 55878,
+    "row_count": 57078,
     "source": "alerts",
     "supports_execution_aware_pnl": false,
     "supports_forecast_skill": true,
@@ -59,9 +59,9 @@
     "available": true,
     "date_range": [
       "2026-07-18T18:49:14.767811+00:00",
-      "2026-07-24T01:45:54.758118+00:00"
+      "2026-07-24T03:00:45.396673+00:00"
     ],
-    "row_count": 1021,
+    "row_count": 1036,
     "source": "pipeline_runs",
     "supports_execution_aware_pnl": false,
     "supports_forecast_skill": false,
@@ -109,7 +109,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 354,
-        "rows": 3174,
+        "rows": 3234,
         "settled_rows": 2166
       },
       {
@@ -118,7 +118,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 354,
-        "rows": 2610,
+        "rows": 2670,
         "settled_rows": 2106
       },
       {
@@ -127,7 +127,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 324,
-        "rows": 3168,
+        "rows": 3228,
         "settled_rows": 2160
       },
       {
@@ -136,7 +136,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 366,
-        "rows": 2622,
+        "rows": 2682,
         "settled_rows": 2118
       },
       {
@@ -145,7 +145,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2544,
+        "rows": 2604,
         "settled_rows": 2040
       },
       {
@@ -154,7 +154,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 360,
-        "rows": 2712,
+        "rows": 2772,
         "settled_rows": 2208
       },
       {
@@ -163,7 +163,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2544,
+        "rows": 2604,
         "settled_rows": 2040
       },
       {
@@ -172,7 +172,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2694,
+        "rows": 2754,
         "settled_rows": 2190
       },
       {
@@ -181,7 +181,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2688,
+        "rows": 2748,
         "settled_rows": 2184
       },
       {
@@ -190,7 +190,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 426,
-        "rows": 3246,
+        "rows": 3306,
         "settled_rows": 2238
       },
       {
@@ -199,7 +199,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2544,
+        "rows": 2604,
         "settled_rows": 2040
       },
       {
@@ -208,7 +208,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2544,
+        "rows": 2604,
         "settled_rows": 2040
       },
       {
@@ -217,7 +217,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 408,
-        "rows": 3252,
+        "rows": 3312,
         "settled_rows": 2244
       },
       {
@@ -226,7 +226,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2544,
+        "rows": 2604,
         "settled_rows": 2040
       },
       {
@@ -235,7 +235,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 420,
-        "rows": 3252,
+        "rows": 3312,
         "settled_rows": 2244
       },
       {
@@ -244,7 +244,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2640,
+        "rows": 2700,
         "settled_rows": 2136
       },
       {
@@ -253,7 +253,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 294,
-        "rows": 2550,
+        "rows": 2610,
         "settled_rows": 2046
       },
       {
@@ -262,7 +262,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2688,
+        "rows": 2748,
         "settled_rows": 2184
       },
       {
@@ -271,7 +271,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 288,
-        "rows": 2688,
+        "rows": 2748,
         "settled_rows": 2184
       },
       {
@@ -280,7 +280,7 @@
         "markets": 84,
         "missing_ensemble_rows": 0,
         "missing_observation_rows": 354,
-        "rows": 3174,
+        "rows": 3234,
         "settled_rows": 2166
       }
     ],
@@ -288,7 +288,7 @@
     "model_coverage": [
       {
         "model_version": "normal-v4-observation-conditioned",
-        "rows": 52494,
+        "rows": 53694,
         "settled_rows": 39390
       },
       {
@@ -309,7 +309,7 @@
   {
     "available": true,
     "notes": "A value captured with the alert is available, but source observation publication/revision timestamps are not persisted.",
-    "row_count": 49338,
+    "row_count": 50538,
     "source": "metar_observations",
     "storage_layer": "alerts.observed_so_far"
   },
@@ -332,7 +332,7 @@
     "model_coverage": [
       {
         "model_version": "normal-v4-observation-conditioned",
-        "rows": 52494,
+        "rows": 53694,
         "settled_rows": 39390
       },
       {

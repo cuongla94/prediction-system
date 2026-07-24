@@ -17,6 +17,7 @@ from .models import (
     ExchangeStatus,
     Fill,
     Market,
+    MarketOrderbook,
     Order,
     OrderAcknowledgement,
     Position,
@@ -26,7 +27,7 @@ from .models import (
 from .orders import format_count, format_price
 
 PRODUCTION_BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
-DEMO_BASE_URL = "https://demo-api.kalshi.co/trade-api/v2"
+DEMO_BASE_URL = "https://external-api.demo.kalshi.co/trade-api/v2"
 DEFAULT_BASE_URL = PRODUCTION_BASE_URL
 
 # Confirmed live 2026-07-19: scaling from 6 tracked cities to 20 (40 series,
@@ -99,6 +100,14 @@ class KalshiClient:
 
     def close(self) -> None:
         self._http.close()
+
+    def websocket_auth_headers(self) -> dict[str, str]:
+        """Fresh signed headers for the official V2 WebSocket handshake."""
+        if self._credentials is None:
+            raise KalshiAuthError(
+                "WebSocket connection requires configured Kalshi credentials."
+            )
+        return sign_request(self._credentials, "GET", "/trade-api/ws/v2")
 
     def __enter__(self) -> "KalshiClient":
         return self
@@ -230,6 +239,41 @@ class KalshiClient:
             params={"start_ts": start_ts, "end_ts": end_ts, "period_interval": period_interval},
         )
         return [Candlestick.from_dict(c) for c in data["candlesticks"]]
+
+    def get_orderbook(self, market_ticker: str, depth: int = 0) -> MarketOrderbook:
+        """Authoritative current full book (or requested 1-100 level depth)."""
+        if depth < 0 or depth > 100:
+            raise ValueError("depth must be between 0 and 100")
+        data = self._request(
+            "GET",
+            f"/markets/{market_ticker}/orderbook",
+            params={"depth": depth},
+            authed=True,
+        )
+        return MarketOrderbook.from_dict(market_ticker, data)
+
+    def get_orderbooks(self, market_tickers: list[str]) -> list[MarketOrderbook]:
+        """Current books for up to 100 markets via Kalshi's batch endpoint."""
+        if not market_tickers:
+            return []
+        if len(market_tickers) > 100:
+            raise ValueError("Kalshi accepts at most 100 orderbook tickers per request.")
+        data = self._request(
+            "GET",
+            "/markets/orderbooks",
+            params={"tickers": ",".join(market_tickers)},
+            authed=True,
+        )
+        rows = data.get("orderbooks") or data.get("market_orderbooks") or []
+        books: list[MarketOrderbook] = []
+        for index, row in enumerate(rows):
+            ticker = (
+                row.get("market_ticker")
+                or row.get("ticker")
+                or (market_tickers[index] if index < len(market_tickers) else "")
+            )
+            books.append(MarketOrderbook.from_dict(ticker, row))
+        return books
 
     def get_historical_markets(
         self,

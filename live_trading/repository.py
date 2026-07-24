@@ -89,7 +89,18 @@ class PostgresLiveRepository:
                 ") select latest.*, ("
                 " select max(fp.created_at) from forecast_pulls fp "
                 " where fp.series_ticker = latest.series_ticker"
-                ") as weather_data_at from latest where close_time > now()"
+                ") as weather_data_at, professional.decision_id as "
+                "professional_decision_id, professional.strategy_version as "
+                "professional_strategy_version, professional.action as "
+                "professional_action, professional.production_order_allowed, "
+                "professional.pretrade_checklist as professional_checklist "
+                "from latest left join lateral ("
+                " select p.decision_id, p.strategy_version, p.action, "
+                "p.production_order_allowed, p.pretrade_checklist "
+                "from professional_decision_snapshots p "
+                "where p.related_alert_id = latest.id "
+                "order by p.decision_time desc, p.id desc limit 1"
+                ") professional on true where close_time > now()"
             )
             columns = [item.name for item in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]

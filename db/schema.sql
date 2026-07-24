@@ -87,6 +87,16 @@ alter table alerts add column if not exists lead_days integer;
 -- kalshi-no-edge-root-cause memory).
 alter table alerts add column if not exists observed_so_far double precision;
 
+-- Point-in-time provenance required by the frozen forward-confirmation
+-- experiment. Upstreams do not always expose a source publication or model
+-- run timestamp; those fields remain null when absent, while collector receipt
+-- time is always stored as the conservative "known no earlier than" boundary.
+alter table alerts add column if not exists forecast_run_time timestamptz;
+alter table alerts add column if not exists forecast_availability_time timestamptz;
+alter table alerts add column if not exists observation_event_time timestamptz;
+alter table alerts add column if not exists observation_publication_time timestamptz;
+alter table alerts add column if not exists observation_collector_received_time timestamptz;
+
 -- Added 2026-07-18 for the dashboard's /status page (monitoring/run_tracker.py)
 -- — answers "is our system running well, any errors" from real execution
 -- history rather than just inferring it from alerts.created_at freshness.
@@ -382,3 +392,426 @@ create table if not exists live_execution_cycles (
 
 create index if not exists live_execution_cycles_started_idx
     on live_execution_cycles (started_at desc);
+
+-- Added 2026-07-24 for the focused real-trading-readiness experiment.
+-- These tables are deliberately narrow and append-only: they preserve the
+-- exact point-in-time inputs, stream recovery evidence, frozen candidate
+-- configuration, and conservative paper outcomes needed to decide whether
+-- the failed climate strategy ever earns reconsideration. They never contain
+-- or trigger a production order.
+create table if not exists forward_candidate_freezes (
+    id bigint generated always as identity primary key,
+    strategy_name text not null,
+    strategy_version text not null unique,
+    model_weight numeric(9, 8) not null,
+    market_weight numeric(9, 8) not null,
+    calibration_method text not null,
+    signal_threshold numeric(9, 8) not null,
+    no_trade_filters jsonb not null,
+    maximum_acceptable_price_logic text not null,
+    frozen_at timestamptz not null,
+    confirmatory_period_start timestamptz not null,
+    required_independent_event_count integer not null,
+    code_config_hash text not null,
+    created_at timestamptz not null default now(),
+    check (abs(model_weight + market_weight - 1.0) < 0.00000001)
+);
+
+create table if not exists forward_orderbook_snapshots (
+    id bigint generated always as identity primary key,
+    market_ticker text not null,
+    source text not null check (
+        source in (
+            'REST_INITIAL', 'REST_RECOVERY', 'WEBSOCKET_SNAPSHOT',
+            'WEBSOCKET_DELTA'
+        )
+    ),
+    source_publish_time timestamptz,
+    collector_received_time timestamptz not null,
+    sequence_number bigint,
+    recovery_reason text,
+    best_yes_bid numeric(18, 6),
+    best_yes_ask numeric(18, 6),
+    best_no_bid numeric(18, 6),
+    best_no_ask numeric(18, 6),
+    spread numeric(18, 6),
+    depth_levels jsonb not null,
+    last_trade numeric(18, 6),
+    market_status text,
+    volume numeric(24, 6),
+    open_interest numeric(24, 6),
+    stale boolean not null,
+    crossed_or_impossible boolean not null,
+    missing_opposing_levels boolean not null,
+    sequence_gap boolean not null,
+    delayed_local_receipt boolean not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists forward_orderbook_snapshots_lookup_idx
+    on forward_orderbook_snapshots (market_ticker, collector_received_time desc);
+
+create table if not exists forward_market_messages (
+    id bigint generated always as identity primary key,
+    message_type text not null,
+    subscription_id bigint,
+    sequence_number bigint,
+    market_ticker text,
+    source_publish_time timestamptz,
+    collector_received_time timestamptz not null,
+    gap_detected boolean not null default false,
+    payload jsonb not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists forward_market_messages_lookup_idx
+    on forward_market_messages (market_ticker, collector_received_time desc);
+
+create table if not exists forward_evidence_decisions (
+    id bigint generated always as identity primary key,
+    decision_id text not null unique,
+    event_ticker text not null,
+    market_ticker text not null,
+    city text not null,
+    station text not null,
+    target_date date not null,
+    strategy_version text not null,
+    candidate_version text not null references forward_candidate_freezes(strategy_version),
+    forecast_model text not null,
+    forecast_run_time timestamptz,
+    forecast_availability_time timestamptz,
+    forecast_values jsonb not null,
+    observation_event_time timestamptz,
+    observation_publication_time timestamptz,
+    observation_collector_received_time timestamptz,
+    observation_revision text,
+    observed_high_at_decision numeric(18, 6),
+    orderbook_snapshot_id bigint not null references forward_orderbook_snapshots(id),
+    model_probability numeric(18, 10) not null,
+    market_probability numeric(18, 10),
+    final_candidate_probability numeric(18, 10),
+    selected_side text check (selected_side in ('YES', 'NO')),
+    maximum_acceptable_price numeric(18, 10),
+    fee_adjusted_edge numeric(18, 10),
+    rejection_reason text,
+    intended_quantity numeric(18, 6) not null,
+    event_time timestamptz,
+    source_publish_time timestamptz,
+    collector_received_time timestamptz not null,
+    decision_time timestamptz not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists forward_evidence_decisions_candidate_idx
+    on forward_evidence_decisions (candidate_version, decision_time);
+
+create table if not exists forward_paper_order_events (
+    id bigint generated always as identity primary key,
+    decision_row_id bigint not null references forward_evidence_decisions(id),
+    candidate_version text not null references forward_candidate_freezes(strategy_version),
+    event_type text not null check (
+        event_type in (
+            'INELIGIBLE', 'NO_FILL', 'PARTIAL_FILL', 'FILLED',
+            'SETTLED_WIN', 'SETTLED_LOSS', 'VOID'
+        )
+    ),
+    requested_quantity numeric(18, 6) not null,
+    filled_quantity numeric(18, 6) not null,
+    weighted_fill_price numeric(18, 6),
+    estimated_fee numeric(18, 6) not null default 0,
+    settlement_result text,
+    net_pnl numeric(18, 6),
+    reason text not null,
+    created_at timestamptz not null
+);
+
+create index if not exists forward_paper_order_events_decision_idx
+    on forward_paper_order_events (decision_row_id, created_at);
+
+-- Enforce append-only evidence at the database boundary. Settlement is a new
+-- forward_paper_order_events row; no earlier decision/snapshot/event is edited.
+create or replace function prevent_forward_evidence_mutation()
+returns trigger language plpgsql as $$
+begin
+    raise exception 'forward readiness evidence is append-only';
+end;
+$$;
+
+drop trigger if exists forward_candidate_freezes_append_only
+    on forward_candidate_freezes;
+create trigger forward_candidate_freezes_append_only
+before update or delete on forward_candidate_freezes
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists forward_orderbook_snapshots_append_only
+    on forward_orderbook_snapshots;
+create trigger forward_orderbook_snapshots_append_only
+before update or delete on forward_orderbook_snapshots
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists forward_market_messages_append_only
+    on forward_market_messages;
+create trigger forward_market_messages_append_only
+before update or delete on forward_market_messages
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists forward_evidence_decisions_append_only
+    on forward_evidence_decisions;
+create trigger forward_evidence_decisions_append_only
+before update or delete on forward_evidence_decisions
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists forward_paper_order_events_append_only
+    on forward_paper_order_events;
+create trigger forward_paper_order_events_append_only
+before update or delete on forward_paper_order_events
+for each row execute function prevent_forward_evidence_mutation();
+
+-- Added 2026-07-24 for the focused professional climate-trader decision
+-- layer. This extends the existing forward evidence chain; it does not create
+-- a second strategy, scheduler, exchange client, or order path. Every table is
+-- append-only so later outcomes cannot rewrite what the system knew or why it
+-- acted at an earlier decision time.
+create table if not exists professional_strategy_freezes (
+    id bigint generated always as identity primary key,
+    base_strategy_name text not null,
+    base_strategy_version text not null,
+    decision_policy_version text not null unique,
+    probability_method_version text not null,
+    policy_config jsonb not null,
+    code_config_hash text not null,
+    frozen_at timestamptz not null,
+    forward_period_start timestamptz not null,
+    automatic_promotion_allowed boolean not null default false,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists professional_contract_truth (
+    id bigint generated always as identity primary key,
+    contract_truth_id text not null unique,
+    event_ticker text not null,
+    market_ticker text not null,
+    decision_policy_version text not null references
+        professional_strategy_freezes(decision_policy_version),
+    status text not null check (status in ('CLEAR', 'CONTRACT_TRUTH_UNCLEAR')),
+    truth jsonb not null,
+    source_market_payload jsonb,
+    source_collected_at timestamptz not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists professional_contract_truth_market_idx
+    on professional_contract_truth (market_ticker, source_collected_at desc);
+
+create table if not exists professional_information_events (
+    id bigint generated always as identity primary key,
+    information_event_id text not null unique,
+    event_type text not null,
+    source text not null,
+    source_event_time timestamptz,
+    source_publication_time timestamptz,
+    collector_receipt_time timestamptz not null,
+    processing_time timestamptz not null,
+    event_ticker text not null,
+    market_ticker text not null,
+    previous_value jsonb,
+    new_value jsonb,
+    material boolean not null,
+    related_decision_id text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists professional_information_events_market_idx
+    on professional_information_events
+        (market_ticker, processing_time desc);
+
+create table if not exists professional_information_reactions (
+    id bigint generated always as identity primary key,
+    information_event_id text not null references
+        professional_information_events(information_event_id),
+    sample_label text not null,
+    target_time timestamptz not null,
+    orderbook_snapshot_id bigint references forward_orderbook_snapshots(id),
+    observed_at timestamptz,
+    executable_yes_price numeric(18, 10),
+    executable_no_price numeric(18, 10),
+    spread numeric(18, 10),
+    yes_depth numeric(18, 6),
+    no_depth numeric(18, 6),
+    hypothetical_limit_fill_supported boolean,
+    created_at timestamptz not null default now(),
+    unique (information_event_id, sample_label)
+);
+
+create table if not exists professional_decision_snapshots (
+    id bigint generated always as identity primary key,
+    decision_id text not null unique,
+    parent_decision_id text,
+    related_alert_id bigint references alerts(id),
+    forward_evidence_decision_id bigint references forward_evidence_decisions(id),
+    contract_truth_id text not null references
+        professional_contract_truth(contract_truth_id),
+    triggering_information_event_id text references
+        professional_information_events(information_event_id),
+    event_ticker text not null,
+    market_ticker text not null,
+    strategy_name text not null,
+    strategy_version text not null,
+    candidate_version text not null,
+    decision_policy_version text not null references
+        professional_strategy_freezes(decision_policy_version),
+    action text not null check (
+        action in (
+            'DO_NOT_TRADE', 'WATCH', 'BUY_YES', 'BUY_NO',
+            'HOLD', 'EXIT', 'REBUY_YES', 'REBUY_NO'
+        )
+    ),
+    decision_reason_code text not null,
+    thesis_type text not null,
+    net_edge_after_costs numeric(18, 10),
+    maximum_loss numeric(18, 6) not null,
+    confidence_level text not null,
+    blockers jsonb not null,
+    contract_truth jsonb not null,
+    weather_state jsonb not null,
+    market_state jsonb not null,
+    account_state jsonb not null,
+    information_as_of jsonb not null,
+    probability jsonb not null,
+    execution jsonb not null,
+    thesis jsonb not null,
+    pretrade_checklist jsonb not null,
+    snapshot jsonb not null,
+    production_order_allowed boolean not null default false,
+    next_review_trigger text not null,
+    decision_time timestamptz not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists professional_decision_snapshots_market_idx
+    on professional_decision_snapshots
+        (market_ticker, candidate_version, decision_time desc);
+create index if not exists professional_decision_snapshots_action_idx
+    on professional_decision_snapshots (action, decision_time desc);
+
+create table if not exists professional_journal_events (
+    id bigint generated always as identity primary key,
+    journal_event_id text not null unique,
+    event_ticker text not null,
+    market_ticker text not null,
+    candidate_version text not null,
+    record_type text not null check (
+        record_type in (
+            'INFORMATION_EVENT', 'DECISION_SNAPSHOT', 'INTENDED_ORDER',
+            'ACTUAL_ORDER', 'FILL', 'POSITION_REVIEW', 'EXIT', 'REENTRY',
+            'SETTLEMENT', 'POST_TRADE_REVIEW'
+        )
+    ),
+    record_id text not null,
+    parent_record_type text,
+    parent_record_id text,
+    event_time timestamptz,
+    source_publication_time timestamptz,
+    collector_receipt_time timestamptz,
+    processing_time timestamptz not null,
+    decision_time timestamptz,
+    order_time timestamptz,
+    fill_time timestamptz,
+    settlement_time timestamptz,
+    payload jsonb not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists professional_journal_market_idx
+    on professional_journal_events
+        (market_ticker, candidate_version, processing_time);
+
+create table if not exists professional_post_trade_reviews (
+    id bigint generated always as identity primary key,
+    review_id text not null unique,
+    decision_id text not null references
+        professional_decision_snapshots(decision_id),
+    market_ticker text not null,
+    classification text not null check (
+        classification in (
+            'GOOD_DECISION_GOOD_OUTCOME',
+            'GOOD_DECISION_BAD_OUTCOME',
+            'BAD_DECISION_GOOD_OUTCOME',
+            'BAD_DECISION_BAD_OUTCOME',
+            'INSUFFICIENT_EVIDENCE'
+        )
+    ),
+    settled_outcome text not null,
+    process_correct boolean not null,
+    outcome_favorable boolean not null,
+    settlement_revision boolean not null default false,
+    review jsonb not null,
+    reviewed_at timestamptz not null,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists professional_action_alerts (
+    id bigint generated always as identity primary key,
+    alert_id text not null unique,
+    alert_type text not null check (
+        alert_type in (
+            'TRADE_READY', 'POSITION_INVALIDATED', 'EXIT_RECOMMENDED',
+            'REENTRY_READY', 'RISK_BLOCKED', 'DATA_STALE',
+            'RECONCILIATION_REQUIRED', 'SETTLED_REVIEW_READY'
+        )
+    ),
+    decision_id text references professional_decision_snapshots(decision_id),
+    market_ticker text not null,
+    action text not null,
+    payload jsonb not null,
+    created_at timestamptz not null default now()
+);
+
+-- Apply the same database-level immutability rule to the professional journal.
+drop trigger if exists professional_strategy_freezes_append_only
+    on professional_strategy_freezes;
+create trigger professional_strategy_freezes_append_only
+before update or delete on professional_strategy_freezes
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists professional_contract_truth_append_only
+    on professional_contract_truth;
+create trigger professional_contract_truth_append_only
+before update or delete on professional_contract_truth
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists professional_information_events_append_only
+    on professional_information_events;
+create trigger professional_information_events_append_only
+before update or delete on professional_information_events
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists professional_information_reactions_append_only
+    on professional_information_reactions;
+create trigger professional_information_reactions_append_only
+before update or delete on professional_information_reactions
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists professional_decision_snapshots_append_only
+    on professional_decision_snapshots;
+create trigger professional_decision_snapshots_append_only
+before update or delete on professional_decision_snapshots
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists professional_journal_events_append_only
+    on professional_journal_events;
+create trigger professional_journal_events_append_only
+before update or delete on professional_journal_events
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists professional_post_trade_reviews_append_only
+    on professional_post_trade_reviews;
+create trigger professional_post_trade_reviews_append_only
+before update or delete on professional_post_trade_reviews
+for each row execute function prevent_forward_evidence_mutation();
+
+drop trigger if exists professional_action_alerts_append_only
+    on professional_action_alerts;
+create trigger professional_action_alerts_append_only
+before update or delete on professional_action_alerts
+for each row execute function prevent_forward_evidence_mutation();

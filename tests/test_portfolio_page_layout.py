@@ -66,6 +66,19 @@ def test_live_automation_panel_shows_production_cash(client, monkeypatch):
     assert "Available production cash" in html
 
 
+def test_live_automation_panel_shows_only_compact_professional_fields(
+    client, monkeypatch
+):
+    html = _portfolio_html(client, monkeypatch)
+    for label in (
+        "Current bot action",
+        "Open-position thesis",
+        "Last decision",
+        "Next review",
+    ):
+        assert label in html
+
+
 def test_capital_blocker_message_present_for_low_balance(client, monkeypatch):
     # The real configured account is well under $5.00 as of this test suite's
     # writing; this assertion documents the honest blocker text rather than
@@ -117,3 +130,15 @@ def test_no_kelly_fraction_or_cash_reserve_cards_in_automated_trading_panel(clie
     panel_html = html[panel_start:panel_end]
     assert "Kelly fraction" not in panel_html
     assert "Cash reserve fraction" not in panel_html
+
+
+def test_backtest_reuses_existing_page_for_compact_readiness_section(client, monkeypatch):
+    _login(client, monkeypatch)
+    response = client.get("/backtest")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    # The section appears only when the reproducible artifact exists. It must
+    # never become a third primary page or a portfolio complication.
+    if "Real-trading readiness" in html:
+        assert "View readiness details" in html
+        assert "<details" in html

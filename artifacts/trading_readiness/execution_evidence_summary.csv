@@ -1,0 +1,3 @@
+candidate_version,submitted_paper_orders,filled_paper_orders,partial_fills,no_fills,settled_trades,wins,losses,voids,gross_pnl,fees,net_pnl,profit_factor,expectancy,maximum_drawdown,status
+forward-blend-model-0.50-market-0.50-v1,0,0,0,0,0,0,0,0,,0,,,,,COLLECTING
+forward-blend-model-0.25-market-0.75-v1,0,0,0,0,0,0,0,0,,0,,,,,COLLECTING

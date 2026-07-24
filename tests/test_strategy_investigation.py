@@ -85,8 +85,15 @@ def test_candidate_metrics_report_wins_losses_brier_and_null_execution_pnl():
         rows[:8],
         rows[8:],
     )
-    assert result["independent_events"] == 2
-    assert result["wins"] + result["losses"] <= 2
+    assert result["independent_city_date_clusters"] == 2
+    assert result["eligible_signals"] <= 2
+    assert (
+        result["directional_signal_wins"]
+        + result["directional_signal_losses"]
+        == result["eligible_signals"]
+    )
+    assert result["settled_trades"] == 0
+    assert result["wins"] == result["losses"] == result["voids"] == 0
     assert result["brier_score"] is not None
     assert result["market_brier_score"] is not None
     assert result["calibration_gap"] is not None

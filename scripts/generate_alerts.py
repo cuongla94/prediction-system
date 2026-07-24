@@ -60,6 +60,11 @@ def price_bracket(
     metric: str,
     observed_so_far: float | None,
     kalshi_url: str,
+    forecast_run_time: datetime | None = None,
+    forecast_availability_time: datetime | None = None,
+    observation_event_time: datetime | None = None,
+    observation_publication_time: datetime | None = None,
+    observation_collector_received_time: datetime | None = None,
 ) -> dict | None:
     """Prices one bracket into a full `alerts` row dict, or None if it should
     be skipped (no bid/ask yet, or the rules text doesn't match the strikes).
@@ -115,6 +120,19 @@ def price_bracket(
         ensemble_mean=ensemble_mean,
         ensemble_std=ensemble_std,
         observed_so_far=bracket_observation,
+        forecast_run_time=forecast_run_time,
+        forecast_availability_time=forecast_availability_time,
+        observation_event_time=(
+            observation_event_time if bracket_observation is not None else None
+        ),
+        observation_publication_time=(
+            observation_publication_time if bracket_observation is not None else None
+        ),
+        observation_collector_received_time=(
+            observation_collector_received_time
+            if bracket_observation is not None
+            else None
+        ),
         model_version="normal-v4-observation-conditioned",
         calibration_validated=False,
         market_yes_price=market_price,
@@ -186,6 +204,9 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
     # None just restores the previous (unconditional) behavior for this cycle,
     # which is worse but not broken.
     observed_so_far: float | None = None
+    observation_event_time: datetime | None = None
+    observation_publication_time: datetime | None = None
+    observation_collector_received_time: datetime | None = None
     if any(event_date == local_today for event_date, _ in dated_events):
         try:
             observation = fetch_today_extreme(
@@ -196,6 +217,12 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
         else:
             if observation is not None:
                 observed_so_far, observed_at = observation
+                observation_event_time = datetime.fromisoformat(
+                    observed_at.replace("Z", "+00:00")
+                )
+                # NWS exposes the observation event time but not a separate
+                # source publication/revision timestamp on this endpoint.
+                observation_collector_received_time = datetime.now(UTC)
                 print(f"{station.city}: observed {station.metric} so far today {observed_so_far:.1f}F (at {observed_at})")
 
     ensemble = fetch_daily_ensemble(
@@ -205,6 +232,10 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
         metric=station.metric,
         forecast_days=3,
     )
+    # Open-Meteo's response does not expose an authoritative underlying model
+    # run/publication timestamp. Receipt time is the future-safe availability
+    # boundary; forecast_run_time stays null rather than being inferred.
+    forecast_availability_time = datetime.now(UTC)
 
     all_rows: list[dict] = []
     for event_date, event in dated_events:
@@ -233,6 +264,11 @@ def build_alert_rows(client: KalshiClient, series_ticker: str) -> tuple[list[dic
                 metric=station.metric,
                 observed_so_far=observed_so_far,
                 kalshi_url=kalshi_link,
+                forecast_run_time=None,
+                forecast_availability_time=forecast_availability_time,
+                observation_event_time=observation_event_time,
+                observation_publication_time=observation_publication_time,
+                observation_collector_received_time=observation_collector_received_time,
             )
             if row is None:
                 continue

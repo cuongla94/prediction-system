@@ -54,7 +54,9 @@ from weather.nws_observations import fetch_today_extreme
 from weather.stations import STATIONS
 
 
-def fetch_known_pricing_inputs(cur, series_ticker: str) -> dict[str, tuple[float, float, str]]:
+def fetch_known_pricing_inputs(
+    cur, series_ticker: str
+) -> dict[str, tuple[float, float, str, datetime | None, datetime | None]]:
     """Latest known (ensemble_mean, ensemble_std, kalshi_url) per market_ticker,
     from the most recent unsettled lead_days=0 alert row for that market --
     this is what lets the refresh skip both the expensive Open-Meteo refetch
@@ -69,12 +71,16 @@ def fetch_known_pricing_inputs(cur, series_ticker: str) -> dict[str, tuple[float
     script.
     """
     cur.execute(
-        "select distinct on (market_ticker) market_ticker, ensemble_mean, ensemble_std, kalshi_url "
+        "select distinct on (market_ticker) market_ticker, ensemble_mean, ensemble_std, "
+        "kalshi_url, forecast_run_time, forecast_availability_time "
         "from alerts where series_ticker = %s and lead_days = 0 and settled_at is null "
         "order by market_ticker, created_at desc",
         (series_ticker,),
     )
-    return {ticker: (mean, std, url) for ticker, mean, std, url in cur.fetchall()}
+    return {
+        ticker: (mean, std, url, run_time, availability_time)
+        for ticker, mean, std, url, run_time, availability_time in cur.fetchall()
+    }
 
 
 def refresh_city(client: KalshiClient, cur, series_ticker: str) -> list[dict]:
@@ -103,7 +109,13 @@ def refresh_city(client: KalshiClient, cur, series_ticker: str) -> list[dict]:
 
     observation = fetch_today_extreme(station.nws_station_id, station.metric, station.standard_time_timezone)
     observed_so_far = observation[0] if observation is not None else None
+    observation_event_time = None
+    observation_received_time = None
     if observation is not None:
+        observation_event_time = datetime.fromisoformat(
+            observation[1].replace("Z", "+00:00")
+        )
+        observation_received_time = datetime.now(UTC)
         print(f"{station.city}: observed {station.metric} so far today {observed_so_far:.1f}F (at {observation[1]})")
 
     markets, _ = client.get_markets(event_ticker=today_event.event_ticker, limit=50)
@@ -114,7 +126,13 @@ def refresh_city(client: KalshiClient, cur, series_ticker: str) -> list[dict]:
             # Not priced by a real generate_alerts.py run yet -- nothing to
             # refresh from; let the slow pipeline establish this one first.
             continue
-        ensemble_mean, ensemble_std, kalshi_link = known[market.ticker]
+        (
+            ensemble_mean,
+            ensemble_std,
+            kalshi_link,
+            forecast_run_time,
+            forecast_availability_time,
+        ) = known[market.ticker]
         row = price_bracket(
             series_ticker=series_ticker,
             city=station.city,
@@ -127,6 +145,11 @@ def refresh_city(client: KalshiClient, cur, series_ticker: str) -> list[dict]:
             metric=station.metric,
             observed_so_far=observed_so_far,
             kalshi_url=kalshi_link,
+            forecast_run_time=forecast_run_time,
+            forecast_availability_time=forecast_availability_time,
+            observation_event_time=observation_event_time,
+            observation_publication_time=None,
+            observation_collector_received_time=observation_received_time,
         )
         if row is not None:
             rows.append(row)

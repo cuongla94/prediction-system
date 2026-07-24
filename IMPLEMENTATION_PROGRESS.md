@@ -60,8 +60,10 @@
 
 ## Blockers
 
-- Production available cash is expected to be approximately `$0.0160`, so live activation must
-  remain blocked until fresh available production cash is strictly greater than `$5.00`.
+- The prior production-capital blocker is resolved: the authenticated read-only
+  balance check on 2026-07-24 returned `$10.0160` available cash. Passing this
+  isolated gate does not authorize live trading while the strategy, evidence,
+  schema, and professional-checklist gates remain blocked.
 - Production network writes are prohibited during this implementation; all write-path verification
   will use injected fake HTTP/Kalshi clients.
 - The configured production database does not yet contain `live_orders`,
@@ -87,3 +89,92 @@
   `artifacts/strategy_investigation/`
 - `dashboard/templates/backtest.html`, `README.md`, `.env.example`,
   `deploy/README.md`
+
+## Real-trading readiness continuation — 2026-07-24
+
+- Scope: focused readiness-gap investigation only; the broad candidate search
+  was not repeated and the configured live strategy remains unchanged/FAILED.
+- Blend audit: the old `market_blend_weight` was the market coefficient
+  (`0.00` pure model, `1.00` pure market). The implementation was not reversed;
+  fields, versions, candidate names, reports, and tests now use explicit
+  `model_weight` and `market_weight`.
+- Metric audit: probability-scored markets, independent city/date clusters,
+  eligible directional signals, submitted/filled/settled paper orders,
+  wins/losses/voids, and no-trade events are separate populations. Historical
+  directional signal W/L is no longer presented as executed trade W/L. All
+  Brier comparisons report matched common populations and exclusions.
+- Uncertainty: the 0.50/0.50 holdout difference is -0.000482 candidate-minus-
+  market Brier across 40 independent city/date clusters; the 95% cluster
+  bootstrap interval is [-0.008940, 0.007588], with a 0.549 probability of
+  beating market. It is not distinguishable from noise and is unstable under
+  leave-one-date/city sensitivity analysis.
+- Readiness conclusion: `NOT_READY_FOR_REAL_TRADING`. Market incremental value
+  fails; data integrity, execution evidence, forward confirmation, and deployed
+  operational persistence are unavailable; forecast skill is insufficient.
+- Frozen research candidates:
+  `forward-blend-model-0.50-market-0.50-v1` and
+  `forward-blend-model-0.25-market-0.75-v1`. Freeze manifests are immutable;
+  code/config changes require a new version and confirmatory period.
+- Collector: existing Kalshi client and price-feed service now support
+  authoritative REST full/batch orderbooks, authenticated orderbook/ticker/
+  trade/lifecycle/fill streams, sequence-gap/reconnect REST recovery,
+  append-only evidence, full depth, explicit source/receipt/decision timestamps,
+  and conservative depth-based paper fills/partial fills/no-fills/settlements.
+  No create/cancel endpoint is called.
+- Provisional forward gate: 60 calendar days, 100 independent city/date events,
+  100 settled eligible paper trades, multiple cities/horizons, no unresolved
+  integrity violations, positive fee-aware expectancy, profit factor above 1,
+  approved drawdown, stable cohorts, and explicit human review.
+- Reproducible artifacts: `artifacts/trading_readiness/`.
+- Resolved deployment blocker: the current schema was applied transactionally
+  to the configured database on 2026-07-24, and the tracked paper-only
+  deployment switch now sets `FORWARD_EVIDENCE_ENABLED=1`.
+- Verification: focused readiness/client/collector/report/UI suites passed;
+  full suite **566 passed**; Ruff passed; scheduler shell syntax passed.
+
+## Professional climate-trader continuation — 2026-07-24
+
+- Added one `SEE → HEAR → THINK → ACT → REVIEW` decision layer over the
+  existing probability, Kalshi, portfolio, risk, scheduler, paper, and
+  reconciliation paths. No second forecast or order engine was added.
+- Persisted explicit contract truth; point-in-time weather, executable market,
+  and account state; useful material information events; immutable decision
+  snapshots; the complete pre-trade checklist; reaction samples; material
+  action alerts; and process-versus-outcome reviews.
+- Implemented exactly eight decisions: `DO_NOT_TRADE`, `WATCH`, `BUY_YES`,
+  `BUY_NO`, `HOLD`, `EXIT`, `REBUY_YES`, and `REBUY_NO`.
+- BUY requires contract/timing/probability/thesis/executable-price/fees/depth/
+  capital/reconciliation/risk checks. HOLD is remaining-EV based. EXIT is
+  full-position and thesis/edge/data/liquidity/risk driven. REBUY requires a
+  new material weather event; a price decline or unchanged event is rejected.
+- Added database-level append-only enforcement across the professional freeze,
+  truth, information, reaction, decision, journal, review, and alert tables.
+- The production order path is fail-closed on a persisted matching professional
+  checklist and `production_order_allowed=true`. The frozen prospective cohort
+  always writes that field as false.
+- Reused the alert-details view for the compact professional panel and added
+  only the four requested decision fields to the Portfolio automation panel.
+- Configured strategy remains `v1-2026-07-23`, FAILED / not promoted.
+- Read-only account evidence: `$10.0160` available cash at
+  `2026-07-24T13:34:35.206432+00:00`; no order was submitted.
+- Deployed-schema evidence: `COLLECTING_PROSPECTIVE_PAPER_EVIDENCE`. The first
+  committed cohort contains 240 full orderbooks, 480 forward decisions, 480
+  `INELIGIBLE` paper events, 1,838 information events, 3,676 professional
+  `DO_NOT_TRADE` decisions, 12,866 reaction samples, and 5,514 journal events.
+  It has zero eligible trades, fills, settlements, reviews, production-allowed
+  decisions, and live orders.
+- The first collection attempt exposed a JSON boundary bug and rolled back
+  completely. The fix converts immutable snapshots to JSON-safe values, has a
+  regression test, preserves the original v1 manifest, and starts the corrected
+  `professional-trader-v2-2026-07-24` cohort without changing the configured
+  climate strategy.
+- Initial baseline collection took approximately 4 hours 24 minutes because
+  every first-seen material fact creates an immutable decision and reaction
+  chain over a remote database. This is an operational performance issue to
+  monitor; it did not weaken correctness, transactionality, or safety.
+- Reproducible artifacts: `artifacts/professional_trader/`, including the
+  immutable strategy-freeze manifest and detailed final report.
+- Verification: focused professional/live/UI tests passed; full suite
+  **597 passed**; Ruff passed; scheduler shell syntax passed; `git diff --check`
+  passed. The authenticated browser smoke test loaded the local dashboard;
+  detailed professional-panel states are covered by rendering tests.

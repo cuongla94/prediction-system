@@ -57,9 +57,19 @@ def _market(ticker: str, *, yes_bid=0.30, yes_ask=0.34) -> Market:
 
 
 def test_fetch_known_pricing_inputs_filters_by_series_lead_days_and_unsettled():
-    cur = FakeCursor([("KXHIGHNY-26JUL20-B79.5", 82.0, 2.1, "https://kalshi.com/x")])
+    cur = FakeCursor([
+        ("KXHIGHNY-26JUL20-B79.5", 82.0, 2.1, "https://kalshi.com/x", None, None)
+    ])
     result = fetch_known_pricing_inputs(cur, "KXHIGHNY")
-    assert result == {"KXHIGHNY-26JUL20-B79.5": (82.0, 2.1, "https://kalshi.com/x")}
+    assert result == {
+        "KXHIGHNY-26JUL20-B79.5": (
+            82.0,
+            2.1,
+            "https://kalshi.com/x",
+            None,
+            None,
+        )
+    }
     assert cur.last_params == ("KXHIGHNY",)
 
 
@@ -77,7 +87,9 @@ def test_refresh_city_returns_nothing_when_nothing_known_yet():
 def test_refresh_city_returns_nothing_when_todays_event_is_not_open():
     # Known pricing inputs exist (generate_alerts.py has run before), but no
     # currently-open event matches today's date -- nothing to refresh.
-    cur = FakeCursor([("KXHIGHNY-26JUL19-B79.5", 82.0, 2.1, "https://kalshi.com/x")])
+    cur = FakeCursor([
+        ("KXHIGHNY-26JUL19-B79.5", 82.0, 2.1, "https://kalshi.com/x", None, None)
+    ])
     client = FakeClient(events=[_event("KXHIGHNY-26JUL25")], markets=[])
     with patch("scripts.refresh_same_day_observations.datetime") as mock_dt:
         import datetime as real_datetime
@@ -90,7 +102,9 @@ def test_refresh_city_returns_nothing_when_todays_event_is_not_open():
 def test_refresh_city_prices_only_markets_with_a_known_baseline():
     known_ticker = "KXHIGHNY-26JUL20-B79.5"
     unknown_ticker = "KXHIGHNY-26JUL20-T77"
-    cur = FakeCursor([(known_ticker, 82.0, 2.2, "https://kalshi.com/x")])
+    cur = FakeCursor([
+        (known_ticker, 82.0, 2.2, "https://kalshi.com/x", None, None)
+    ])
     client = FakeClient(
         events=[_event("KXHIGHNY-26JUL20")],
         markets=[_market(known_ticker), _market(unknown_ticker, yes_bid=0.90, yes_ask=0.95)],
@@ -117,7 +131,16 @@ def test_refresh_city_uses_the_stored_kalshi_url_not_a_reconstructed_one():
     # not cheaply available here without another API call, so this must reuse
     # whatever kalshi_url was already stored rather than rebuilding it (which
     # would produce a broken URL with an empty title/slug).
-    cur = FakeCursor([("KXHIGHNY-26JUL20-B79.5", 82.0, 2.2, "https://kalshi.com/markets/kxhighny/real-slug/kxhighny-26jul20")])
+    cur = FakeCursor([
+        (
+            "KXHIGHNY-26JUL20-B79.5",
+            82.0,
+            2.2,
+            "https://kalshi.com/markets/kxhighny/real-slug/kxhighny-26jul20",
+            None,
+            None,
+        )
+    ])
     client = FakeClient(events=[_event("KXHIGHNY-26JUL20")], markets=[_market("KXHIGHNY-26JUL20-B79.5")])
     with (
         patch("scripts.refresh_same_day_observations.fetch_today_extreme", return_value=None),
@@ -133,7 +156,9 @@ def test_refresh_city_uses_the_stored_kalshi_url_not_a_reconstructed_one():
 def test_refresh_city_handles_no_observation_yet_gracefully():
     # fetch_today_extreme returning None (e.g. right after local midnight)
     # must degrade to unconditional pricing, not crash.
-    cur = FakeCursor([("KXHIGHNY-26JUL20-B79.5", 82.0, 2.2, "https://kalshi.com/x")])
+    cur = FakeCursor([
+        ("KXHIGHNY-26JUL20-B79.5", 82.0, 2.2, "https://kalshi.com/x", None, None)
+    ])
     client = FakeClient(events=[_event("KXHIGHNY-26JUL20")], markets=[_market("KXHIGHNY-26JUL20-B79.5")])
     with (
         patch("scripts.refresh_same_day_observations.fetch_today_extreme", return_value=None),

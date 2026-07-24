@@ -55,6 +55,27 @@ process before deploying this version. In particular, verify `live_orders`,
 `live_execution_cycles`, plus `bot_control_events.live_enabled`, exist. Do not
 enable live automation until that verification passes.
 
+The same migration creates the append-only forward-readiness evidence tables.
+To begin the frozen, paper-only confirmation period after deploying:
+
+```bash
+cd /opt/kalshi-prediction-market
+sudo -u kalshi .venv/bin/python scripts/run_trading_readiness_report.py
+sudo -u kalshi .venv/bin/python scripts/run_professional_trader_report.py
+# `deploy/forward-evidence.env` now sets `FORWARD_EVIDENCE_ENABLED=1` for the
+# explicitly authorized paper-only cohort. Change that tracked file to 0 and
+# deploy to stop future collection without touching secrets.
+systemctl restart kalshi-price-feed
+sudo -u kalshi .venv/bin/python scripts/run_forward_evidence_collector.py --mode once
+```
+
+This reuses the existing price-feed service and pipeline schedule. It records
+orderbooks, stream messages, candidate decisions, professional contract truth,
+material information events, immutable decision/checklist snapshots, reaction
+samples, journal records, process reviews, and simulated fills only; it does
+not submit or cancel a Kalshi order. Verify the professional report shows
+`COLLECTING_PROSPECTIVE_PAPER_EVIDENCE` after the schema is applied.
+
 ## 5. Start the dashboard and verify
 
 ```bash

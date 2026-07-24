@@ -15,17 +15,17 @@
 
 ## Inventory sources
 
-- alerts: 55878 rows
+- alerts: 57078 rows
 - forecast_pulls: 0 rows
 - price_snapshots: 0 rows
 - paper_trades: 157 rows
-- pipeline_runs: 1021 rows
+- pipeline_runs: 1036 rows
 - bot_control_events: 8 rows
 - live_orders: 0 rows
 - live_order_fills: 0 rows
 - live_reconciliation_runs: 0 rows
 - alerts_coverage: coverage record rows
-- metar_observations: 49338 rows
+- metar_observations: 50538 rows
 - settlement_outcomes: 42774 rows
 - historical_real_trades: 0 rows
 - strategy_versions: 3 rows

@@ -1,0 +1,41 @@
+{
+  "automatic_promotion_allowed": false,
+  "base_strategy_version": "v1-2026-07-23",
+  "buy_no_decisions": 0,
+  "buy_yes_decisions": 0,
+  "configured_live_strategy_changed": false,
+  "confirmed_missing_data": [
+    "No settled post-trade process-quality reviews are available.",
+    "No prospective HOLD, EXIT, or re-entry evidence is available."
+  ],
+  "contract_truth_unclear_records": 0,
+  "decision_policy_version": "professional-trader-v2-2026-07-24",
+  "decision_snapshots": 3676,
+  "do_not_trade_decisions": 3676,
+  "execution": {
+    "actual_simulated_fills": 0,
+    "expectancy": null,
+    "fees": "0",
+    "gross_pnl": "0",
+    "intended_orders": 0,
+    "losses": 0,
+    "maximum_drawdown": null,
+    "net_pnl": "0",
+    "no_fills": 0,
+    "observable_fills": 0,
+    "profit_factor": null,
+    "settlements": 0,
+    "wins": 0
+  },
+  "exit_decisions": 0,
+  "hold_decisions": 0,
+  "information_events": 1838,
+  "next_required_action": "Continue prospective collection without tuning.",
+  "production_order_submitted": false,
+  "prospective_paper_only": true,
+  "reaction_samples": 12866,
+  "rebuy_decisions": 0,
+  "schema_deployed": true,
+  "status": "COLLECTING_PROSPECTIVE_PAPER_EVIDENCE",
+  "watch_decisions": 0
+}

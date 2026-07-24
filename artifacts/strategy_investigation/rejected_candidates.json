@@ -56,38 +56,38 @@
   },
   {
     "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
-    "strategy_name": "market_blend_0.00",
-    "strategy_version": "research-blend-0.00-v1"
+    "strategy_name": "blend_model_1.00_market_0.00",
+    "strategy_version": "research-blend-model-1.00-market-0.00-v2"
   },
   {
     "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
-    "strategy_name": "market_blend_0.10",
-    "strategy_version": "research-blend-0.10-v1"
+    "strategy_name": "blend_model_0.90_market_0.10",
+    "strategy_version": "research-blend-model-0.90-market-0.10-v2"
   },
   {
     "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
-    "strategy_name": "market_blend_0.20",
-    "strategy_version": "research-blend-0.20-v1"
+    "strategy_name": "blend_model_0.80_market_0.20",
+    "strategy_version": "research-blend-model-0.80-market-0.20-v2"
   },
   {
     "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
-    "strategy_name": "market_blend_0.30",
-    "strategy_version": "research-blend-0.30-v1"
+    "strategy_name": "blend_model_0.70_market_0.30",
+    "strategy_version": "research-blend-model-0.70-market-0.30-v2"
   },
   {
     "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
-    "strategy_name": "market_blend_0.50",
-    "strategy_version": "research-blend-0.50-v1"
+    "strategy_name": "blend_model_0.50_market_0.50",
+    "strategy_version": "research-blend-model-0.50-market-0.50-v2"
   },
   {
     "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
-    "strategy_name": "market_blend_0.75",
-    "strategy_version": "research-blend-0.75-v1"
+    "strategy_name": "blend_model_0.25_market_0.75",
+    "strategy_version": "research-blend-model-0.25-market-0.75-v2"
   },
   {
     "reason": "No executable point-in-time bid/ask or depth data; forecast-skill evidence only.",
-    "strategy_name": "market_blend_1.00",
-    "strategy_version": "research-blend-1.00-v1"
+    "strategy_name": "blend_model_0.00_market_1.00",
+    "strategy_version": "research-blend-model-0.00-market-1.00-v2"
   },
   {
     "reason": "Per-model point-in-time forecast values were not persisted in alerts; the live database cannot evaluate this candidate without refetching history.",

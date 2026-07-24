@@ -33,12 +33,28 @@ UV="$HOME/.local/bin/uv"
 # out in full above.
 # shellcheck source=scheduler/healthcheck.sh
 . "$(dirname "${BASH_SOURCE[0]}")/healthcheck.sh"
-set -a; [ -f .env ] && . ./.env; set +a
+set -a
+[ -f .env ] && . ./.env
+# Tracked deployment override is sourced last so the explicitly authorized
+# paper-only cohort is enabled even when an older droplet .env still omits the
+# flag or contains its previous default of 0.
+[ -f deploy/forward-evidence.env ] && . ./deploy/forward-evidence.env
+set +a
 HC="${HEALTHCHECK_PIPELINE_URL:-}"
 hc_start "$HC"
 
 "$UV" run --no-sync python scripts/generate_alerts.py
 generate_status=$?
+
+# Reuses this pipeline and is inert by default. Once the readiness schema is
+# deployed and the explicit collection flag is set, append one frozen-candidate
+# decision batch. This never calls a production order endpoint.
+if [ "${FORWARD_EVIDENCE_ENABLED:-0}" = "1" ]; then
+  # Creates/verifies the immutable professional decision-policy freeze before
+  # the first prospective row, then refreshes its read-only evidence summary.
+  "$UV" run --no-sync python scripts/run_professional_trader_report.py
+  "$UV" run --no-sync python scripts/run_forward_evidence_collector.py --mode once
+fi
 
 "$UV" run --no-sync python scripts/mark_settled_alerts.py
 settle_status=$?

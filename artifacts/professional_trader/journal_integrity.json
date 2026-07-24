@@ -1,0 +1,17 @@
+{
+  "append_only_database_triggers_defined": true,
+  "journal_record_counts": [
+    {
+      "count": 3676,
+      "record_type": "DECISION_SNAPSHOT"
+    },
+    {
+      "count": 1838,
+      "record_type": "INFORMATION_EVENT"
+    }
+  ],
+  "manual_and_bot_activity_separated": true,
+  "post_trade_review_counts": [],
+  "production_orders_allowed_by_forward_cohort": false,
+  "schema_deployed": true
+}

@@ -149,7 +149,8 @@ class CandidateSpec:
     name: str
     version: str
     method: str
-    market_blend_weight: float | None = None
+    model_weight: float | None = None
+    market_weight: float | None = None
     edge_threshold: float = EDGE_THRESHOLD
     status: str = "EXPLORATORY"
     feature_list: tuple[str, ...] = ()
@@ -322,9 +323,13 @@ def fit_candidate(
             )
         return raw
     if spec.method == "blend":
-        weight = float(spec.market_blend_weight or 0)
+        model_weight = float(spec.model_weight or 0)
+        market_weight = float(spec.market_weight or 0)
+        if not math.isclose(model_weight + market_weight, 1.0, abs_tol=1e-12):
+            raise ValueError("Blend model_weight and market_weight must sum to 1.0.")
         return lambda row: (
-            (1 - weight) * row.model_probability + weight * row.market_probability
+            model_weight * row.model_probability
+            + market_weight * row.market_probability
         )
     if spec.method == "market_prior":
         return lambda row: _sigmoid(
@@ -440,7 +445,7 @@ def evaluate_candidate(
     for row, prediction in zip(evaluation, predictions, strict=True):
         if _candidate_trade_filter(spec, row, spread_cutoff=spread_cutoff):
             by_event[row.event_key].append((row, prediction))
-    trades: list[bool] = []
+    directional_signals: list[bool] = []
     for event_rows in by_event.values():
         row, prediction = max(
             event_rows,
@@ -450,10 +455,16 @@ def evaluate_candidate(
         if abs(edge) < spec.edge_threshold + taker_fee(row.market_probability):
             continue
         side_yes = edge > 0
-        trades.append(row.settled_winner if side_yes else not row.settled_winner)
-    wins = sum(trades)
-    losses = len(trades) - wins
-    ci_low, ci_high = _wilson_interval(wins, len(trades))
+        directional_signals.append(
+            row.settled_winner if side_yes else not row.settled_winner
+        )
+    directional_wins = sum(directional_signals)
+    directional_losses = len(directional_signals) - directional_wins
+    ci_low, ci_high = _wilson_interval(
+        directional_wins, len(directional_signals)
+    )
+    independent_clusters = len({row.event_key for row in evaluation})
+    comparison = matched_brier_comparison(predictions, market, outcomes)
     return {
         "strategy_name": spec.name,
         "strategy_version": spec.version,
@@ -463,15 +474,33 @@ def evaluate_candidate(
             "No executable point-in-time bid/ask or depth data; forecast-skill evidence only."
         ),
         "execution_basis": EXECUTION_BASIS,
-        "independent_events": len({row.event_key for row in evaluation}),
-        "settled_rows": len(evaluation),
-        "wins": wins,
-        "losses": losses,
-        "win_rate": wins / len(trades) if trades else None,
-        "win_rate_ci_low": ci_low,
-        "win_rate_ci_high": ci_high,
-        "brier_score": brier_score(predictions, outcomes),
-        "market_brier_score": brier_score(market, outcomes),
+        "probability_scored_events": comparison["common_event_count"],
+        "probability_scored_markets": comparison["common_event_count"],
+        "independent_city_date_clusters": independent_clusters,
+        "eligible_signals": len(directional_signals),
+        "directional_signal_wins": directional_wins,
+        "directional_signal_losses": directional_losses,
+        "directional_signal_voids": 0,
+        "directional_win_rate": (
+            directional_wins / len(directional_signals)
+            if directional_signals
+            else None
+        ),
+        "directional_win_rate_ci_low": ci_low,
+        "directional_win_rate_ci_high": ci_high,
+        "no_trade_events": independent_clusters - len(directional_signals),
+        "submitted_paper_orders": 0,
+        "filled_paper_orders": 0,
+        "settled_trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "voids": 0,
+        "win_rate": None,
+        "win_rate_ci_low": None,
+        "win_rate_ci_high": None,
+        "brier_score": comparison["model_brier_score"],
+        "market_brier_score": comparison["market_brier_score"],
+        **comparison,
         "calibration_gap": _calibration_gap(predictions, outcomes),
         "log_loss": _log_loss(predictions, outcomes),
         "gross_pnl": None,
@@ -483,7 +512,8 @@ def evaluate_candidate(
         "training_period": _date_range(train),
         "validation_period": _date_range(evaluation),
         "holdout_result": None,
-        "market_blend_weight": spec.market_blend_weight,
+        "model_weight": spec.model_weight,
+        "market_weight": spec.market_weight,
         "edge_threshold": spec.edge_threshold,
     }
 
@@ -500,15 +530,39 @@ def _empty_metrics(
         "promotion_status": "REJECTED",
         "promotion_reason": spec.rejection_reason or "Insufficient data.",
         "execution_basis": EXECUTION_BASIS,
-        "independent_events": len({row.event_key for row in evaluation}),
-        "settled_rows": len(evaluation),
+        "probability_scored_events": 0,
+        "probability_scored_markets": 0,
+        "independent_city_date_clusters": len(
+            {row.event_key for row in evaluation}
+        ),
+        "eligible_signals": 0,
+        "directional_signal_wins": 0,
+        "directional_signal_losses": 0,
+        "directional_signal_voids": 0,
+        "directional_win_rate": None,
+        "directional_win_rate_ci_low": None,
+        "directional_win_rate_ci_high": None,
+        "no_trade_events": len({row.event_key for row in evaluation}),
+        "submitted_paper_orders": 0,
+        "filled_paper_orders": 0,
+        "settled_trades": 0,
         "wins": 0,
         "losses": 0,
+        "voids": 0,
         "win_rate": None,
         "win_rate_ci_low": None,
         "win_rate_ci_high": None,
         "brier_score": None,
         "market_brier_score": None,
+        "model_brier_score": None,
+        "model_event_count": 0,
+        "market_event_count": 0,
+        "common_event_count": 0,
+        "excluded_model_events": len(evaluation),
+        "excluded_market_events": len(evaluation),
+        "exclusion_reasons": (
+            spec.rejection_reason or "Candidate probability unavailable."
+        ),
         "calibration_gap": None,
         "log_loss": None,
         "gross_pnl": None,
@@ -520,8 +574,76 @@ def _empty_metrics(
         "training_period": _date_range(train),
         "validation_period": _date_range(evaluation),
         "holdout_result": None,
-        "market_blend_weight": spec.market_blend_weight,
+        "model_weight": spec.model_weight,
+        "market_weight": spec.market_weight,
         "edge_threshold": spec.edge_threshold,
+    }
+
+
+def matched_brier_comparison(
+    model_predictions: list[float | None],
+    market_predictions: list[float | None],
+    outcomes: list[bool | None],
+) -> dict[str, Any]:
+    """Compare model and market only on their identical, outcome-labeled rows.
+
+    The earlier report happened to have complete inputs, but did not prove that
+    fact in its output. This audit surface makes population equality explicit
+    and keeps future missing values from silently producing unmatched Brier
+    scores.
+    """
+    if not (
+        len(model_predictions) == len(market_predictions) == len(outcomes)
+    ):
+        raise ValueError("Model, market, and outcome populations must align.")
+    model_available = sum(
+        value is not None and math.isfinite(float(value))
+        for value in model_predictions
+    )
+    market_available = sum(
+        value is not None and math.isfinite(float(value))
+        for value in market_predictions
+    )
+    common: list[tuple[float, float, bool]] = []
+    reasons: dict[str, int] = defaultdict(int)
+    for model, market, outcome in zip(
+        model_predictions, market_predictions, outcomes, strict=True
+    ):
+        if outcome is None:
+            reasons["missing_outcome"] += 1
+            continue
+        if model is None or not math.isfinite(float(model)):
+            reasons["missing_or_invalid_model_probability"] += 1
+            continue
+        if market is None or not math.isfinite(float(market)):
+            reasons["missing_or_invalid_market_probability"] += 1
+            continue
+        common.append((float(model), float(market), bool(outcome)))
+    common_count = len(common)
+    common_outcomes = [item[2] for item in common]
+    return {
+        "model_event_count": model_available,
+        "market_event_count": market_available,
+        "common_event_count": common_count,
+        "excluded_model_events": len(model_predictions) - common_count,
+        "excluded_market_events": len(market_predictions) - common_count,
+        "exclusion_reasons": (
+            "none"
+            if not reasons
+            else "; ".join(
+                f"{name}={count}" for name, count in sorted(reasons.items())
+            )
+        ),
+        "model_brier_score": (
+            brier_score([item[0] for item in common], common_outcomes)
+            if common
+            else None
+        ),
+        "market_brier_score": (
+            brier_score([item[1] for item in common], common_outcomes)
+            if common
+            else None
+        ),
     }
 
 
@@ -603,10 +725,11 @@ def candidate_specs() -> list[CandidateSpec]:
     ]
     specs.extend(
         CandidateSpec(
-            f"market_blend_{weight:.2f}",
-            f"research-blend-{weight:.2f}-v1",
+            f"blend_model_{1 - weight:.2f}_market_{weight:.2f}",
+            f"research-blend-model-{1 - weight:.2f}-market-{weight:.2f}-v2",
             "blend",
-            market_blend_weight=weight,
+            model_weight=1 - weight,
+            market_weight=weight,
             feature_list=("stored model probability", "market probability"),
         )
         for weight in BLEND_WEIGHTS
@@ -1123,7 +1246,12 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         return
     fieldnames = list(rows[0])
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fieldnames,
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -1193,8 +1321,20 @@ def run_investigation(connection: Any, output_dir: Path) -> dict[str, Any]:
         result["holdout_result"] = {
             "brier_score": holdout_result["brier_score"],
             "market_brier_score": holdout_result["market_brier_score"],
-            "wins": holdout_result["wins"],
-            "losses": holdout_result["losses"],
+            "probability_scored_events": holdout_result[
+                "probability_scored_events"
+            ],
+            "independent_city_date_clusters": holdout_result[
+                "independent_city_date_clusters"
+            ],
+            "eligible_signals": holdout_result["eligible_signals"],
+            "directional_signal_wins": holdout_result[
+                "directional_signal_wins"
+            ],
+            "directional_signal_losses": holdout_result[
+                "directional_signal_losses"
+            ],
+            "settled_trades": holdout_result["settled_trades"],
             "net_pnl": holdout_result["net_pnl"],
             "promotion_status": holdout_result["promotion_status"],
         }
@@ -1229,9 +1369,21 @@ def run_investigation(connection: Any, output_dir: Path) -> dict[str, Any]:
         "best_candidate": best["strategy_name"],
         "candidate_brier_score": best["brier_score"],
         "market_brier_score": market_brier,
-        "wins": best["wins"],
-        "losses": best["losses"],
-        "win_rate": best["win_rate"],
+        "probability_scored_events": best["probability_scored_events"],
+        "independent_city_date_clusters": best[
+            "independent_city_date_clusters"
+        ],
+        "eligible_signals": best["eligible_signals"],
+        "directional_signal_wins": best["directional_signal_wins"],
+        "directional_signal_losses": best["directional_signal_losses"],
+        "directional_win_rate": best["directional_win_rate"],
+        "submitted_paper_orders": 0,
+        "filled_paper_orders": 0,
+        "settled_trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "voids": 0,
+        "win_rate": None,
         "net_pnl": None,
         "expectancy": None,
         "profit_factor": None,
@@ -1395,19 +1547,34 @@ def _write_final_report(
         "",
         "## Candidate comparison",
         "",
-        "| Candidate | Events | Wins | Losses | Win rate | Brier | Market Brier | "
-        "Calibration gap | Gross P&L | Fees | Net P&L | Profit factor | Expectancy | "
-        "Max drawdown | Holdout Brier | Promotion |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | "
-        "--- | --- | --- | ---: | --- |",
+        "Probability, filtering, and execution are separate populations. Directional "
+        "W/L describes settled historical signal direction only; executed trade W/L "
+        "remains zero until prospective paper orders are observed.",
+        "",
+        "| Candidate | Model wt | Market wt | Probability-scored markets | "
+        "City/date clusters | Eligible signals | Directional W/L | No-trade clusters | "
+        "Submitted / filled / settled paper | Trade W/L/V | Model Brier | Market Brier | "
+        "Common population | Holdout Brier | Promotion |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+        "---: | ---: | ---: | ---: | --- |",
     ]
     for result in candidates:
         holdout_result = holdout_by_version[result["strategy_version"]]
         lines.append(
-            f"| {result['strategy_name']} | {result['independent_events']} | "
-            f"{result['wins']} | {result['losses']} | {_fmt(result['win_rate'])} | "
-            f"{_fmt(result['brier_score'])} | {_fmt(result['market_brier_score'])} | "
-            f"{_fmt(result['calibration_gap'])} | — | — | — | — | — | — | "
+            f"| {result['strategy_name']} | {_fmt(result['model_weight'])} | "
+            f"{_fmt(result['market_weight'])} | "
+            f"{result['probability_scored_events']} | "
+            f"{result['independent_city_date_clusters']} | "
+            f"{result['eligible_signals']} | "
+            f"{result['directional_signal_wins']}/"
+            f"{result['directional_signal_losses']} | "
+            f"{result['no_trade_events']} | "
+            f"{result['submitted_paper_orders']}/"
+            f"{result['filled_paper_orders']}/{result['settled_trades']} | "
+            f"{result['wins']}/{result['losses']}/{result['voids']} | "
+            f"{_fmt(result['brier_score'])} | "
+            f"{_fmt(result['market_brier_score'])} | "
+            f"{result['common_event_count']} | "
             f"{_fmt(holdout_result['brier_score'])} | REJECTED |"
         )
     lines.extend(

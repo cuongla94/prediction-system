@@ -9,12 +9,25 @@ Usage: uv run scripts/run_price_feed.py
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+
+from dotenv import load_dotenv
 
 from price_feed.subscriber import run_forever
 
 
 def main() -> int:
+    load_dotenv()
+    if os.environ.get("FORWARD_EVIDENCE_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        from scripts.run_forward_evidence_collector import run
+
+        return run("stream")
     asyncio.run(run_forever())
     return 0
 

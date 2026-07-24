@@ -175,3 +175,44 @@ def test_subaccount_is_scoped_on_authenticated_portfolio_reads(monkeypatch):
     client.get_balance()
     client.get_order("order-1")
     assert all(call[2]["params"]["subaccount"] == 3 for call in calls)
+
+
+def test_current_orderbook_and_batch_orderbook_paths(monkeypatch):
+    calls = []
+
+    def fake_request(method, endpoint, **kwargs):
+        calls.append((method, endpoint, kwargs))
+        book = {
+            "orderbook_fp": {
+                "yes_dollars": [["0.4000", "2.00"]],
+                "no_dollars": [["0.3000", "1.50"]],
+            }
+        }
+        if endpoint == "/markets/orderbooks":
+            return {
+                "orderbooks": [
+                    {"market_ticker": "T1", **book},
+                    {"market_ticker": "T2", **book},
+                ]
+            }
+        return book
+
+    client = KalshiClient()
+    monkeypatch.setattr(client, "_request", fake_request)
+    single = client.get_orderbook("T1", depth=10)
+    batch = client.get_orderbooks(["T1", "T2"])
+
+    assert single.best_yes_bid == Decimal("0.4000")
+    assert single.best_yes_ask == Decimal("0.7000")
+    assert single.yes_spread == Decimal("0.3000")
+    assert [book.ticker for book in batch] == ["T1", "T2"]
+    assert calls[0] == (
+        "GET",
+        "/markets/T1/orderbook",
+        {"params": {"depth": 10}, "authed": True},
+    )
+    assert calls[1] == (
+        "GET",
+        "/markets/orderbooks",
+        {"params": {"tickers": "T1,T2"}, "authed": True},
+    )

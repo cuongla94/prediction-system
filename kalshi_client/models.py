@@ -184,6 +184,109 @@ class Candlestick:
 
 
 @dataclass(frozen=True)
+class OrderbookLevel:
+    price: Decimal
+    quantity: Decimal
+
+    @classmethod
+    def from_pair(cls, value: list[Any] | tuple[Any, ...]) -> "OrderbookLevel":
+        if len(value) < 2:
+            raise ValueError("Orderbook level must contain price and quantity.")
+        return cls(price=Decimal(str(value[0])), quantity=Decimal(str(value[1])))
+
+
+@dataclass(frozen=True)
+class MarketOrderbook:
+    """Kalshi's native two-sided YES/NO bid book.
+
+    Kalshi exposes bids for each outcome, not an explicit ask ladder. A YES
+    ask at price ``p`` is reconstructed from a NO bid at ``1-p`` and vice
+    versa. Last trade is intentionally absent because it is not execution
+    evidence.
+    """
+
+    ticker: str
+    yes_bids: tuple[OrderbookLevel, ...]
+    no_bids: tuple[OrderbookLevel, ...]
+    raw: dict[str, Any] = field(repr=False)
+
+    @classmethod
+    def from_dict(
+        cls, ticker: str, data: dict[str, Any]
+    ) -> "MarketOrderbook":
+        book = data.get("orderbook_fp") or data.get("orderbook") or data
+        yes = book.get("yes_dollars") or book.get("yes_dollars_fp") or []
+        no = book.get("no_dollars") or book.get("no_dollars_fp") or []
+        return cls(
+            ticker=ticker,
+            yes_bids=tuple(
+                sorted(
+                    (OrderbookLevel.from_pair(level) for level in yes),
+                    key=lambda level: level.price,
+                    reverse=True,
+                )
+            ),
+            no_bids=tuple(
+                sorted(
+                    (OrderbookLevel.from_pair(level) for level in no),
+                    key=lambda level: level.price,
+                    reverse=True,
+                )
+            ),
+            raw=data,
+        )
+
+    @property
+    def best_yes_bid(self) -> Decimal | None:
+        return self.yes_bids[0].price if self.yes_bids else None
+
+    @property
+    def best_no_bid(self) -> Decimal | None:
+        return self.no_bids[0].price if self.no_bids else None
+
+    @property
+    def best_yes_ask(self) -> Decimal | None:
+        return (
+            Decimal("1") - self.best_no_bid
+            if self.best_no_bid is not None
+            else None
+        )
+
+    @property
+    def best_no_ask(self) -> Decimal | None:
+        return (
+            Decimal("1") - self.best_yes_bid
+            if self.best_yes_bid is not None
+            else None
+        )
+
+    @property
+    def yes_spread(self) -> Decimal | None:
+        if self.best_yes_bid is None or self.best_yes_ask is None:
+            return None
+        return self.best_yes_ask - self.best_yes_bid
+
+    def asks_for(self, outcome: str) -> tuple[OrderbookLevel, ...]:
+        """Return executable asks for buying one outcome, best first."""
+        normalized = outcome.upper()
+        if normalized == "YES":
+            opposing = self.no_bids
+        elif normalized == "NO":
+            opposing = self.yes_bids
+        else:
+            raise ValueError("outcome must be YES or NO")
+        return tuple(
+            sorted(
+                (
+                    OrderbookLevel(Decimal("1") - level.price, level.quantity)
+                    for level in opposing
+                ),
+                key=lambda level: level.price,
+            )
+        )
+
+
+@dataclass(frozen=True)
 class Position:
     """One market's real position on the user's actual Kalshi account —
     from GET /portfolio/positions (authenticated, real holdings, not a

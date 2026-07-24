@@ -45,9 +45,9 @@
           <div class="stat-sub">Lower is better</div>
         </div>
         <div class="stat-card stat-card--flat">
-          <div class="stat-label">One trade per event</div>
-          <div class="stat-value tnum">{{ investigation.wins }}W / {{ investigation.losses }}L</div>
-          <div class="stat-sub">{{ "%.1f%%"|format(investigation.win_rate * 100) if investigation.win_rate is not none else 'not measurable' }}</div>
+          <div class="stat-label">Eligible historical signals</div>
+          <div class="stat-value tnum">{{ investigation.eligible_signals }}</div>
+          <div class="stat-sub">{{ investigation.directional_signal_wins }}W / {{ investigation.directional_signal_losses }}L directional; not executions</div>
         </div>
         <div class="stat-card stat-card--loss">
           <div class="stat-label">Promotion</div>
@@ -60,17 +60,64 @@
         <summary style="cursor:pointer;font-weight:600;color:var(--color-accent)">View investigation details</summary>
         <div class="table-wrap" style="margin-top:14px">
           <table class="table"><tbody>
-            <tr><td>Validation wins / losses / win rate</td><td class="tnum">{{ investigation.wins }} / {{ investigation.losses }} / {{ "%.1f%%"|format(investigation.win_rate * 100) if investigation.win_rate is not none else '—' }}</td></tr>
+            <tr><td>Probability-scored markets</td><td class="tnum">{{ investigation.probability_scored_events }}</td></tr>
+            <tr><td>Independent city/date clusters</td><td class="tnum">{{ investigation.independent_city_date_clusters }}</td></tr>
+            <tr><td>Eligible directional signals</td><td class="tnum">{{ investigation.eligible_signals }} ({{ investigation.directional_signal_wins }}W / {{ investigation.directional_signal_losses }}L)</td></tr>
+            <tr><td>Submitted / filled / settled paper orders</td><td class="tnum">{{ investigation.submitted_paper_orders }} / {{ investigation.filled_paper_orders }} / {{ investigation.settled_trades }}</td></tr>
             <tr><td>Net P&amp;L</td><td>{{ investigation.net_pnl if investigation.net_pnl is not none else 'Not estimable — no executable quote history' }}</td></tr>
             <tr><td>Expectancy</td><td>{{ investigation.expectancy if investigation.expectancy is not none else 'Not estimable' }}</td></tr>
             <tr><td>Profit factor</td><td>{{ investigation.profit_factor if investigation.profit_factor is not none else 'Not estimable' }}</td></tr>
             <tr><td>Maximum drawdown</td><td>{{ investigation.maximum_drawdown if investigation.maximum_drawdown is not none else 'Not estimable' }}</td></tr>
-            <tr><td>Untouched holdout Brier</td><td class="tnum">{{ "%.4f"|format(investigation.holdout.brier_score) }} vs market {{ "%.4f"|format(investigation.holdout.market_brier_score) }} ({{ investigation.holdout.independent_events }} events)</td></tr>
+            <tr><td>Untouched holdout Brier</td><td class="tnum">{{ "%.4f"|format(investigation.holdout.brier_score) }} vs market {{ "%.4f"|format(investigation.holdout.market_brier_score) }} ({{ investigation.holdout.independent_city_date_clusters }} city/date clusters)</td></tr>
             <tr><td>No-lookahead validation</td><td>{{ 'Passed' if investigation.no_lookahead_passed else 'Failed' }}</td></tr>
             <tr><td>Configured live strategy changed</td><td>{{ 'Yes' if not investigation.configured_live_strategy_unchanged else 'No' }}</td></tr>
           </tbody></table>
         </div>
         <p class="section-note">Full reproducible outputs are stored under <code>artifacts/strategy_investigation/</code>, including the canonical rows, candidate registry, cohorts, walk-forward folds, holdout, rejected candidates, and final report.</p>
+      </details>
+    </div>
+    {% endif %}
+
+    {% if trading_readiness %}
+    {% set collection = trading_readiness.forward_collection %}
+    <div class="card" style="padding:18px 20px;margin-bottom:28px">
+      <div class="section-head" style="margin-top:0">
+        <h4>Real-trading readiness</h4>
+        <span class="section-head-rule"></span>
+        <span class="status-badge status-{{ 'success' if trading_readiness.overall_conclusion == 'READY_FOR_EXPLICIT_REVIEW' else 'failed' }}">{{ trading_readiness.overall_conclusion|replace('_', ' ')|title }}</span>
+      </div>
+      <div class="stat-grid" style="margin-bottom:14px">
+        {% for gate_name in ['DATA_INTEGRITY', 'FORECAST_SKILL', 'MARKET_INCREMENTAL_VALUE', 'EXECUTION_EVIDENCE', 'FORWARD_CONFIRMATION', 'OPERATIONAL_SAFETY'] %}
+        {% set gate = trading_readiness.gates[gate_name] %}
+        <div class="stat-card stat-card--{{ 'flat' if gate.status == 'PASS' else 'loss' }}">
+          <div class="stat-label">{{ gate_name|replace('_', ' ')|title }}</div>
+          <div class="stat-value" style="font-size:15px">{{ gate.status|replace('_', ' ')|title }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="section-note" style="margin-bottom:12px">
+        Forward collection: <strong>{{ collection.calendar_days }} / 60 days</strong>,
+        <strong>{{ collection.independent_events }} / 100 independent events</strong>,
+        <strong>{{ collection.settled_eligible_paper_trades }} / 100 settled eligible paper trades</strong>.
+        <br><strong>Next:</strong> {{ trading_readiness.next_required_action }}
+      </p>
+      <details>
+        <summary style="cursor:pointer;font-weight:600;color:var(--color-accent)">View readiness details</summary>
+        <div class="table-wrap" style="margin-top:14px">
+          <table class="table">
+            <thead><tr><th>Gate</th><th>Status</th><th>Checks</th></tr></thead>
+            <tbody>
+            {% for gate_name, gate in trading_readiness.gates.items() %}
+              <tr>
+                <td style="font-weight:600">{{ gate_name|replace('_', ' ')|title }}</td>
+                <td>{{ gate.status|replace('_', ' ')|title }}</td>
+                <td>{{ gate.checks|length }} backend checks; see generated readiness artifact for evidence and reasons</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="section-note">The readiness report is backend-generated from reproducible artifacts. It cannot promote or modify the configured live strategy.</p>
       </details>
     </div>
     {% endif %}

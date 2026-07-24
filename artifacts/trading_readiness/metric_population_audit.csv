@@ -1,0 +1,24 @@
+strategy_name,strategy_version,probability_scored_events,independent_city_date_clusters,eligible_signals,submitted_paper_orders,filled_paper_orders,settled_trades,wins,losses,voids,no_trade_events,directional_signal_wins,directional_signal_losses,model_event_count,market_event_count,common_event_count,excluded_model_events,excluded_market_events,exclusion_reasons,model_weight,market_weight
+current_observation_conditioned,research-current-v1,240,40,38,0,0,0,0,0,0,2,14,24,240,240,240,0,0,none,,
+hard_lower_bound_truncation,research-hard-lower-bound-v1,240,40,38,0,0,0,0,0,0,2,14,24,240,240,240,0,0,none,,
+raw_ensemble,research-raw-v1,240,40,38,0,0,0,0,0,0,2,13,25,240,240,240,0,0,none,,
+empirical_remaining_day_residual,research-residual-v1,240,40,39,0,0,0,0,0,0,1,10,29,240,240,240,0,0,none,,
+logistic_calibration,research-logistic-v1,240,40,38,0,0,0,0,0,0,2,14,24,240,240,240,0,0,none,,
+isotonic_calibration,research-isotonic-v1,240,40,40,0,0,0,0,0,0,0,15,25,240,240,240,0,0,none,,
+market_prior_weather_update,research-market-prior-v1,240,40,5,0,0,0,0,0,0,35,4,1,240,240,240,0,0,none,,
+conservative_no_trade_filter,research-conservative-v1,240,40,33,0,0,0,0,0,0,7,12,21,240,240,240,0,0,none,,
+newly_impossible_brackets,research-impossible-v1,240,40,0,0,0,0,0,0,0,40,0,0,240,240,240,0,0,none,,
+late_day_observation_filter,research-late-day-v1,240,40,0,0,0,0,0,0,0,40,0,0,240,240,240,0,0,none,,
+low_model_disagreement,research-low-disagreement-v1,240,40,13,0,0,0,0,0,0,27,6,7,240,240,240,0,0,none,,
+blend_model_1.00_market_0.00,research-blend-model-1.00-market-0.00-v2,240,40,38,0,0,0,0,0,0,2,14,24,240,240,240,0,0,none,1.0,0.0
+blend_model_0.90_market_0.10,research-blend-model-0.90-market-0.10-v2,240,40,37,0,0,0,0,0,0,3,14,23,240,240,240,0,0,none,0.9,0.1
+blend_model_0.80_market_0.20,research-blend-model-0.80-market-0.20-v2,240,40,37,0,0,0,0,0,0,3,14,23,240,240,240,0,0,none,0.8,0.2
+blend_model_0.70_market_0.30,research-blend-model-0.70-market-0.30-v2,240,40,34,0,0,0,0,0,0,6,13,21,240,240,240,0,0,none,0.7,0.3
+blend_model_0.50_market_0.50,research-blend-model-0.50-market-0.50-v2,240,40,28,0,0,0,0,0,0,12,9,19,240,240,240,0,0,none,0.5,0.5
+blend_model_0.25_market_0.75,research-blend-model-0.25-market-0.75-v2,240,40,14,0,0,0,0,0,0,26,3,11,240,240,240,0,0,none,0.25,0.75
+blend_model_0.00_market_1.00,research-blend-model-0.00-market-1.00-v2,240,40,0,0,0,0,0,0,0,40,0,0,240,240,240,0,0,none,0.0,1.0
+individual_gfs,research-gfs-v1,0,40,0,0,0,0,0,0,0,40,0,0,0,0,0,240,240,Per-model point-in-time forecast values were not persisted in alerts; the live database cannot evaluate this candidate without refetching history.,,
+individual_ecmwf,research-ecmwf-v1,0,40,0,0,0,0,0,0,0,40,0,0,0,0,0,240,240,Per-model point-in-time forecast values were not persisted in alerts; the live database cannot evaluate this candidate without refetching history.,,
+individual_icon,research-icon-v1,0,40,0,0,0,0,0,0,0,40,0,0,0,0,0,240,240,Per-model point-in-time forecast values were not persisted in alerts; the live database cannot evaluate this candidate without refetching history.,,
+cross_bracket_executable_consistency,research-cross-bracket-v1,0,40,0,0,0,0,0,0,0,40,0,0,0,0,0,240,240,No synchronized executable bid/ask depth was persisted; midpoint or last-price differences cannot be called arbitrage.,,
+remaining_hour_maximum_simulation,research-remaining-hour-simulation-v1,0,40,0,0,0,0,0,0,0,40,0,0,0,0,0,240,240,"Hourly forecast trajectories, forecast publication timestamps, and observation publication/revision timestamps were not persisted. A remaining-hour maximum simulation would require unavailable future-safe inputs.",,

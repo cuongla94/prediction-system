@@ -1,0 +1,50 @@
+{
+  "automatic_promotion_allowed": false,
+  "candidate_count": 2,
+  "candidates": [
+    {
+      "automatic_promotion_allowed": false,
+      "calibration_method": "stored_normal_v4_observation_conditioned",
+      "candidate_freeze_timestamp": "2026-07-24T03:06:08.473245+00:00",
+      "code_config_hash": "ec3cb0553aedf4e9ad8d27a0adbdd1e0a13b796e09a0e7d6b19fd89568fc38e0",
+      "confirmatory_period_start": "2026-07-24T03:06:08.473245+00:00",
+      "market_weight": 0.5,
+      "maximum_acceptable_price_logic": "selected_side_probability - signal_threshold - estimated_taker_fee",
+      "model_weight": 0.5,
+      "no_trade_filters": [
+        "invalid_probability",
+        "stale_or_invalid_orderbook",
+        "insufficient_visible_depth",
+        "price_above_maximum"
+      ],
+      "promotion_status": "FROZEN_RESEARCH",
+      "required_independent_event_count": 100,
+      "signal_threshold": 0.05,
+      "strategy_name": "blend_model_0.50_market_0.50",
+      "strategy_version": "forward-blend-model-0.50-market-0.50-v1"
+    },
+    {
+      "automatic_promotion_allowed": false,
+      "calibration_method": "stored_normal_v4_observation_conditioned",
+      "candidate_freeze_timestamp": "2026-07-24T03:06:08.473245+00:00",
+      "code_config_hash": "08599ff9b32f4d62a1c5eeef0827da012f03ad268f126a9dc3687d340f3cf112",
+      "confirmatory_period_start": "2026-07-24T03:06:08.473245+00:00",
+      "market_weight": 0.75,
+      "maximum_acceptable_price_logic": "selected_side_probability - signal_threshold - estimated_taker_fee",
+      "model_weight": 0.25,
+      "no_trade_filters": [
+        "invalid_probability",
+        "stale_or_invalid_orderbook",
+        "insufficient_visible_depth",
+        "price_above_maximum"
+      ],
+      "promotion_status": "FROZEN_RESEARCH",
+      "required_independent_event_count": 100,
+      "signal_threshold": 0.05,
+      "strategy_name": "blend_model_0.25_market_0.75",
+      "strategy_version": "forward-blend-model-0.25-market-0.75-v1"
+    }
+  ],
+  "configured_live_strategy_changed": false,
+  "manifest_version": "forward-confirmation-v1"
+}

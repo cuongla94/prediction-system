@@ -223,7 +223,10 @@ def _kalshi_environment() -> str:
         or not base_url
     ):
         return "prod"
-    if "demo-api.kalshi.co" in base_url:
+    if (
+        "demo-api.kalshi.co" in base_url
+        or "external-api.demo.kalshi.co" in base_url
+    ):
         return "demo"
     return "unknown"
 
@@ -303,6 +306,12 @@ def _live_persistence_snapshot() -> dict:
         "latest_market_data": None,
         "worker_healthy": False,
         "recent_live_orders": [],
+        "professional_bot_action": "DO_NOT_TRADE",
+        "professional_open_position_thesis": "No bot-owned open thesis.",
+        "professional_last_decision_time": None,
+        "professional_next_review_trigger": (
+            "Awaiting a persisted professional decision snapshot."
+        ),
     }
     connection = get_core_db()
     if connection is None:
@@ -313,6 +322,38 @@ def _live_persistence_snapshot() -> dict:
         reconciliation = repository.latest_reconciliation()
         timestamps = repository.readiness_timestamps()
         recent_orders = repository.recent_orders(limit=12)
+        professional = {}
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select to_regclass('professional_decision_snapshots')"
+            )
+            if cursor.fetchone()[0] is not None:
+                cursor.execute(
+                    "select action, production_order_allowed, thesis, "
+                    "account_state, decision_time, next_review_trigger "
+                    "from professional_decision_snapshots "
+                    "order by decision_time desc, id desc limit 1"
+                )
+                row = cursor.fetchone()
+                if row:
+                    position = row[3] or {}
+                    has_position = (
+                        Decimal(str(position.get("contracts_held") or 0)) > 0
+                    )
+                    professional = {
+                        "professional_bot_action": (
+                            row[0]
+                            if row[1]
+                            else "DO_NOT_TRADE"
+                        ),
+                        "professional_open_position_thesis": (
+                            (row[2] or {}).get("summary")
+                            if has_position
+                            else "No bot-owned open thesis."
+                        ),
+                        "professional_last_decision_time": row[4],
+                        "professional_next_review_trigger": row[5],
+                    }
         for order in recent_orders:
             for key, value in list(order.items()):
                 if isinstance(value, datetime):
@@ -329,6 +370,7 @@ def _live_persistence_snapshot() -> dict:
             "latest_market_data": timestamps["market_data_at"],
             "worker_healthy": repository.worker_healthy(),
             "recent_live_orders": recent_orders,
+            **professional,
         }
     except Exception:
         return defaults
@@ -1279,6 +1321,7 @@ def backtest():
         trend=trend,
         revisit_streak=REVISIT_STREAK,
         investigation=_strategy_investigation_summary(),
+        trading_readiness=_trading_readiness_summary(),
     )
 
 
@@ -1295,6 +1338,22 @@ def _strategy_investigation_summary() -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def _trading_readiness_summary() -> dict | None:
+    """Load the backend-generated, multi-gate readiness report and counters."""
+    root = Path(__file__).resolve().parents[1] / "artifacts" / "trading_readiness"
+    try:
+        readiness = json.loads((root / "readiness_gates.json").read_text())
+        forward = json.loads((root / "forward_collection_status.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(readiness, dict) or not isinstance(forward, dict):
+        return None
+    return {
+        **readiness,
+        "forward_collection": forward,
+    }
 
 
 @dataclass(frozen=True)
@@ -1949,6 +2008,185 @@ def _group_previews_by_date(previews: list[ForecastPreview]) -> list[dict]:
     return groups
 
 
+def _professional_trader_views() -> dict[str, dict]:
+    """Latest point-in-time research view per market, with a safe empty state.
+
+    Multiple frozen research candidates can exist for the same market. The
+    most conservative current action wins when their latest decisions
+    disagree, so the UI cannot present an experimental BUY while another
+    frozen view says the opportunity is blocked.
+    """
+    connection = get_core_db()
+    if connection is None:
+        return {}
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select to_regclass('professional_decision_snapshots')"
+            )
+            if cursor.fetchone()[0] is None:
+                return {}
+            cursor.execute(
+                "with latest as ("
+                " select distinct on (p.market_ticker, p.candidate_version) "
+                "p.*, i.event_type as latest_information_type, "
+                "i.source_publication_time as latest_information_time, "
+                "r.classification as latest_review_classification "
+                "from professional_decision_snapshots p "
+                "left join professional_information_events i "
+                "on i.information_event_id = "
+                "p.triggering_information_event_id "
+                "left join lateral ("
+                " select r1.classification "
+                " from professional_post_trade_reviews r1 "
+                " where r1.decision_id = p.decision_id "
+                " order by r1.reviewed_at desc, r1.id desc limit 1"
+                ") r on true "
+                "order by p.market_ticker, p.candidate_version, "
+                "p.decision_time desc, p.id desc"
+                ") select market_ticker, decision_id, candidate_version, "
+                "action, decision_reason_code, decision_time, "
+                "contract_truth, weather_state, market_state, account_state, "
+                "probability, execution, thesis, net_edge_after_costs, "
+                "confidence_level, blockers, next_review_trigger, "
+                "production_order_allowed, latest_information_type, "
+                "latest_information_time, latest_review_classification "
+                "from latest order by market_ticker, decision_time desc"
+            )
+            columns = [item.name for item in cursor.description]
+            rows = [
+                dict(zip(columns, row, strict=True))
+                for row in cursor.fetchall()
+            ]
+    except Exception:
+        return {}
+    finally:
+        connection.close()
+
+    action_priority = {
+        "DO_NOT_TRADE": 0,
+        "WATCH": 1,
+        "EXIT": 2,
+        "HOLD": 3,
+        "BUY_YES": 4,
+        "BUY_NO": 4,
+        "REBUY_YES": 4,
+        "REBUY_NO": 4,
+    }
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        grouped[row["market_ticker"]].append(row)
+
+    result: dict[str, dict] = {}
+    for ticker, candidates in grouped.items():
+        current_time = max(row["decision_time"] for row in candidates)
+        current = [
+            row for row in candidates if row["decision_time"] == current_time
+        ]
+        row = min(
+            current,
+            key=lambda item: (
+                action_priority.get(item["action"], 99),
+                item["candidate_version"],
+            ),
+        )
+        weather = row["weather_state"] or {}
+        market = row["market_state"] or {}
+        account = row["account_state"] or {}
+        probability = row["probability"] or {}
+        execution = row["execution"] or {}
+        thesis = row["thesis"] or {}
+        action = row["action"]
+        side = (
+            "NO"
+            if action in {"BUY_NO", "REBUY_NO"}
+            or account.get("current_position_side") == "NO"
+            else "YES"
+        )
+        executable = (
+            market.get("buy_no_price")
+            if side == "NO"
+            else market.get("buy_yes_price")
+        )
+        position_contracts = Decimal(
+            str(account.get("contracts_held") or 0)
+        )
+        result[ticker] = {
+            "action": action,
+            "decision_reason": row["decision_reason_code"],
+            "decision_id": row["decision_id"],
+            "decision_time": row["decision_time"],
+            "candidate_version": row["candidate_version"],
+            "prospective_paper_only": not row[
+                "production_order_allowed"
+            ],
+            "contract_status": (row["contract_truth"] or {}).get(
+                "status", "CONTRACT_TRUTH_UNCLEAR"
+            ),
+            "latest_information": (
+                row["latest_information_type"]
+                or "INITIAL_CANDIDATE_SIGNAL"
+            ),
+            "latest_information_time": row["latest_information_time"],
+            "weather_summary": (
+                f"Observed {weather.get('observed_daily_extreme', '—')}°F; "
+                f"forecast {weather.get('latest_forecast', '—')}°F; "
+                f"{weather.get('remaining_observation_hours', '—')}h remain"
+            ),
+            "fair_probability": probability.get(
+                f"final_working_{side.lower()}_probability"
+            ),
+            "executable_probability": executable,
+            "net_edge": row["net_edge_after_costs"],
+            "confidence": row["confidence_level"],
+            "thesis": thesis.get("summary", "No trade thesis recorded."),
+            "counterargument": thesis.get(
+                "strongest_reason_market_may_be_correct", "Unavailable."
+            ),
+            "maximum_price": execution.get(
+                "maximum_acceptable_entry_price"
+            ),
+            "position": (
+                f"{position_contracts} {account.get('current_position_side')} "
+                "contract(s)"
+                if position_contracts > 0
+                else "No position"
+            ),
+            "invalidation": thesis.get(
+                "invalidation_conditions", "Unavailable."
+            ),
+            "expected_next_event": thesis.get(
+                "expected_next_information_event", "Unavailable."
+            ),
+            "next_review": row["next_review_trigger"],
+            "blockers": row["blockers"] or [],
+            "why_decision": (
+                f"{row['decision_reason_code']}. "
+                f"{thesis.get('reason_market_may_be_mispriced', '')}"
+            ).strip(),
+            "what_would_change": thesis.get(
+                "invalidation_conditions", "A new material information event."
+            ),
+            "timeline": (
+                f"Forecast available "
+                f"{weather.get('forecast_availability_time', '—')}; "
+                f"observation published "
+                f"{weather.get('observation_publication_time', '—')}; "
+                f"quote received {market.get('quote_receipt_time', '—')}."
+            ),
+            "position_history": (
+                "Current account snapshot separates manual exposure "
+                f"({account.get('manual_market_exposure', '0')}) from bot "
+                f"exposure ({account.get('bot_market_exposure', '0')})."
+            ),
+            "post_trade_review": (
+                row["latest_review_classification"]
+                or "No settled review yet."
+            ),
+        }
+    return result
+
+
 @app.route("/")
 def index():
     fetched_at = datetime.now(UTC)
@@ -1979,6 +2217,7 @@ def index():
         actionable_alerts=_actionable_alerts(alerts),
         today_lows=today_lows,
         today_highs=today_highs,
+        professional_views=_professional_trader_views(),
         fetched_at=fetched_at,
     )
 

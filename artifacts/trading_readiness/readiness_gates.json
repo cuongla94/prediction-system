@@ -1,0 +1,213 @@
+{
+  "automatic_promotion_allowed": false,
+  "configured_live_strategy_changed": false,
+  "gates": {
+    "DATA_INTEGRITY": {
+      "checks": [
+        {
+          "name": "point_in_time_forecast_availability",
+          "reason": "Historical source timestamps are absent; this gate uses prospective collector receipt/availability evidence.",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "point_in_time_observation_availability",
+          "reason": "Same-day decisions require an observation event and collector-receipt timestamp; future-day observations are N/A.",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "point_in_time_market_quote_availability",
+          "reason": "Historical synchronized executable orderbooks were not stored; prospective REST/stream snapshots are required.",
+          "status": "PASS"
+        },
+        {
+          "name": "no_settlement_leakage",
+          "status": "PASS"
+        },
+        {
+          "name": "correct_bracket_mapping",
+          "status": "PASS"
+        },
+        {
+          "name": "consistent_candidate_populations",
+          "status": "PASS"
+        }
+      ],
+      "gate": "DATA_INTEGRITY",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    "EXECUTION_EVIDENCE": {
+      "checks": [
+        {
+          "name": "synchronized_executable_orderbooks",
+          "status": "PASS"
+        },
+        {
+          "name": "yes_no_prices_spread_depth_timestamps",
+          "status": "PASS"
+        },
+        {
+          "name": "realistic_fill_simulation",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "fees_and_unfilled_orders",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "partial_fill_handling",
+          "observed_partial_fills": 0,
+          "status": "INSUFFICIENT_EVIDENCE"
+        }
+      ],
+      "gate": "EXECUTION_EVIDENCE",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    "FORECAST_SKILL": {
+      "checks": [
+        {
+          "name": "improves_current_weather_model_out_of_sample",
+          "status": "PASS"
+        },
+        {
+          "maximum": 0.05,
+          "name": "acceptable_calibration",
+          "status": "PASS",
+          "value": 0.017753336917275694
+        },
+        {
+          "name": "no_severe_city_date_instability",
+          "status": "INSUFFICIENT_EVIDENCE"
+        }
+      ],
+      "gate": "FORECAST_SKILL",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    "FORWARD_CONFIRMATION": {
+      "checks": [
+        {
+          "name": "candidate_frozen_before_collection",
+          "status": "PASS"
+        },
+        {
+          "current": 1,
+          "name": "minimum_calendar_period",
+          "required": 60,
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "current": 40,
+          "name": "minimum_independent_events",
+          "required": 100,
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "current": 0,
+          "name": "minimum_settled_eligible_paper_trades",
+          "required": 100,
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "current": 20,
+          "name": "minimum_city_coverage",
+          "required": 5,
+          "status": "PASS"
+        },
+        {
+          "current": 1,
+          "name": "minimum_forecast_horizon_coverage",
+          "required": 2,
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "current": 240,
+          "name": "no_unresolved_data_integrity_violations",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "positive_fee_aware_execution_performance",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "not_concentrated_in_one_city_or_date",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "conservative_fill_assumptions",
+          "status": "INSUFFICIENT_EVIDENCE"
+        },
+        {
+          "name": "no_retrospective_parameter_changes",
+          "status": "PASS"
+        }
+      ],
+      "gate": "FORWARD_CONFIRMATION",
+      "status": "INSUFFICIENT_EVIDENCE"
+    },
+    "MARKET_INCREMENTAL_VALUE": {
+      "checks": [
+        {
+          "name": "adds_information_beyond_market",
+          "status": "FAIL"
+        },
+        {
+          "name": "chronological_holdout_improves_market",
+          "status": "FAIL"
+        },
+        {
+          "confidence_interval_95": [
+            0.008206436186787298,
+            0.018965445719036297
+          ],
+          "name": "confidence_not_plainly_noise",
+          "status": "FAIL"
+        }
+      ],
+      "gate": "MARKET_INCREMENTAL_VALUE",
+      "status": "FAIL"
+    },
+    "OPERATIONAL_SAFETY": {
+      "checks": [
+        {
+          "name": "order_submission_idempotency",
+          "status": "PASS"
+        },
+        {
+          "name": "reconciliation",
+          "status": "PASS"
+        },
+        {
+          "name": "persistent_kill_switch",
+          "status": "PASS"
+        },
+        {
+          "name": "capital_gate",
+          "status": "PASS"
+        },
+        {
+          "name": "loss_and_exposure_limits",
+          "status": "PASS"
+        },
+        {
+          "name": "stale_data_blocker",
+          "status": "PASS"
+        },
+        {
+          "name": "manual_order_protection",
+          "status": "PASS"
+        },
+        {
+          "name": "restart_recovery",
+          "status": "PASS"
+        },
+        {
+          "name": "deployed_persistence_schema",
+          "status": "PASS"
+        }
+      ],
+      "gate": "OPERATIONAL_SAFETY",
+      "status": "PASS"
+    }
+  },
+  "next_required_action": "Deploy the append-only evidence schema and run the forward collector; then accrue the frozen 60-day/100-event/100-settled-trade period.",
+  "overall_conclusion": "NOT_READY_FOR_REAL_TRADING"
+}

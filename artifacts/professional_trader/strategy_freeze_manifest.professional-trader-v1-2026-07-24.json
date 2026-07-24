@@ -1,0 +1,26 @@
+{
+  "freeze": {
+    "automatic_promotion_allowed": false,
+    "base_strategy_name": "weather-daily-temp",
+    "base_strategy_version": "v1-2026-07-23",
+    "code_config_hash": "a44279677c56519c9107281e3b3ad4a7cadce7f60f22e7f99b283f1822590ee7",
+    "configured_live_strategy_changed": false,
+    "decision_policy_version": "professional-trader-v1-2026-07-24",
+    "forward_period_start": "2026-07-24T13:36:42.524297+00:00",
+    "frozen_at": "2026-07-24T13:36:42.524297+00:00",
+    "policy_config": {
+      "automatic_promotion_allowed": false,
+      "intended_quantity": "1",
+      "margin_of_safety": "0.05",
+      "material_forecast_change_degrees": "0.50",
+      "material_probability_change": "0.02",
+      "material_quantity_change": "1",
+      "material_spread_change": "0.02",
+      "maximum_order_size": "1",
+      "maximum_spread": "0.10",
+      "prospective_paper_only": true
+    },
+    "probability_method_version": "normal-v4-observation-conditioned"
+  },
+  "manifest_version": "professional-forward-test-v1"
+}

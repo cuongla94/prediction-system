@@ -54,6 +54,13 @@
     </div>
   </div>
 
+  <div class="professional-bot-summary" aria-label="Professional bot decision">
+    <div><span>Current bot action</span><strong>{{ bs.professional_bot_action }}</strong></div>
+    <div><span>Open-position thesis</span><strong>{{ bs.professional_open_position_thesis }}</strong></div>
+    <div><span>Last decision</span><strong class="tnum">{{ bs.professional_last_decision_time|pacific('%b %-d, %H:%M %Z') if bs.professional_last_decision_time else 'none collected' }}</strong></div>
+    <div><span>Next review</span><strong>{{ bs.professional_next_review_trigger }}</strong></div>
+  </div>
+
   {% if not bs.capital_eligible %}
   <div class="banner banner-warning" style="margin-bottom:14px">
     <strong>Add capital to enable live automation</strong><br>

@@ -6,6 +6,10 @@ After=network.target
 Type=simple
 User=kalshi
 WorkingDirectory=/opt/kalshi-prediction-market
+# Tracked operational switch for the explicitly authorized prospective
+# paper-only forward cohort. Python's load_dotenv() does not override this
+# process environment value.
+EnvironmentFile=-/opt/kalshi-prediction-market/deploy/forward-evidence.env
 # Direct venv binary, not `uv run` — matches kalshi-dashboard.service, more
 # robust under systemd than relying on PATH.
 ExecStart=/opt/kalshi-prediction-market/.venv/bin/python scripts/run_price_feed.py
